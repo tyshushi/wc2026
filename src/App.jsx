@@ -1712,6 +1712,53 @@ export default function App() {
     if (!isClosed) setUserKOW((p) => ({ ...p, [`w_${matchId}`]: team }));
   };
 
+  function handleFeelingLucky() {
+    if (isClosed) return;
+    const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+    // 1. Fill all unpicked group matches
+    const newGroupPreds = { ...groupPreds };
+    GROUP_MATCHES.forEach((m) => {
+      if (!newGroupPreds[m.id])
+        newGroupPreds[m.id] = rand(['home', 'draw', 'away']);
+    });
+
+    // 2. Compute standings from the now-complete group picks
+    const newStandings = computeStandings(newGroupPreds);
+
+    // 3. Fill unpicked best-3rd slots using eligible teams from standings
+    const newB3 = { ...userB3 };
+    BEST3RD_MATCHES.forEach((m) => {
+      const groups = m.awaySlot.groups;
+      const key = `b3_${groups.join('')}`;
+      if (!newB3[key]) {
+        const eligible = groups
+          .map((g) => newStandings[g]?.[2]?.team)
+          .filter(Boolean);
+        if (eligible.length > 0) newB3[key] = rand(eligible);
+      }
+    });
+
+    // 4. Fill knockout picks round by round so each round has teams resolved
+    const newKOW = { ...userKOW };
+    const KO_STAGE_ORDER = ['R32', 'R16', 'QF', 'SF', '3P', 'F'];
+    KO_STAGE_ORDER.forEach((stage) => {
+      KO_DEF.filter((m) => m.stage === stage).forEach((m) => {
+        if (!newKOW[`w_${m.id}`]) {
+          const home = resolveTeam(m.homeSlot, newStandings, newB3, newKOW);
+          const away = resolveTeam(m.awaySlot, newStandings, newB3, newKOW);
+          const candidates = [home, away].filter(Boolean);
+          if (candidates.length > 0) newKOW[`w_${m.id}`] = rand(candidates);
+        }
+      });
+    });
+
+    setGroupPreds(newGroupPreds);
+    setUserB3(newB3);
+    setUserKOW(newKOW);
+    showToast('🍀 Lucky picks filled in! Review and save.');
+  }
+
   if (loading)
     return (
       <div
@@ -1897,6 +1944,20 @@ export default function App() {
               >
                 Board
               </button>
+              {!isClosed && (
+                <button
+                  style={{
+                    ...c.btn,
+                    ...c.btnSm,
+                    background: '#fef9c3',
+                    color: '#854d0e',
+                    border: '1px solid #fde68a',
+                  }}
+                  onClick={handleFeelingLucky}
+                >
+                  🍀 Lucky
+                </button>
+              )}
               {!isClosed && (
                 <button
                   style={{ ...c.btn, ...(saved ? c.btnG : c.btnP), ...c.btnSm }}
