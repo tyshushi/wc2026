@@ -377,6 +377,10 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedPlayer, setSelectedPlayer] = useState(null);
+  const [detailOrigin, setDetailOrigin] = useState("leaderboard");
+
+  const openPlayerDetail = (name, origin) => { setSelectedPlayer(name); setDetailOrigin(origin); setView("playerDetail"); };
 
   useEffect(() => { (async () => {
     try { const u = await storageGet(USERS_KEY); if (u?.value) setAllUsers(JSON.parse(u.value)); } catch {}
@@ -552,9 +556,15 @@ export default function App() {
       </div>
     </div>}
 
-    {view==="admin" && <AdminPanel resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} resultBonus={resultBonus} settings={settings} allUsers={allUsers} leaderboard={leaderboard} onSaveResults={saveResults} onSaveSettings={saveSettings} onDeleteUser={name=>setConfirmDelete(name)} onBack={()=>setView("home")} showToast={showToast}/>}
+    {view==="admin" && <AdminPanel resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} resultBonus={resultBonus} settings={settings} allUsers={allUsers} leaderboard={leaderboard} onSaveResults={saveResults} onSaveSettings={saveSettings} onDeleteUser={name=>setConfirmDelete(name)} onBack={()=>setView("home")} showToast={showToast} onSelectPlayer={name=>openPlayerDetail(name, "admin")}/>}
 
-    {view==="leaderboard" && <LeaderboardScreen leaderboard={leaderboard} resultsIn={Object.keys(resultGroup).length} onBack={()=>setView(username?"predict":"home")} count={Object.keys(allUsers).length}/>}
+    {view==="leaderboard" && <LeaderboardScreen leaderboard={leaderboard} resultsIn={Object.keys(resultGroup).length} onBack={()=>setView(username?"predict":"home")} count={Object.keys(allUsers).length} onSelectPlayer={name=>openPlayerDetail(name, "leaderboard")}/>}
+
+    {view==="playerDetail" && <PlayerDetailScreen
+      name={selectedPlayer}
+      user={allUsers[selectedPlayer]}
+      resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} resultBonus={resultBonus}
+      onBack={()=>setView(detailOrigin === "admin" ? "admin" : "leaderboard")}/>}
 
     {view==="predict" && <>
       <div style={{background:CT.ink, color:"#fff", position:"sticky", top:0, zIndex:8}}>
@@ -986,7 +996,7 @@ function BracketVisual({ koMatches, userKOW, setKOPick, now, resultKOW }) {
 }
 
 // ═══ LEADERBOARD SCREEN ══════════════════════════════════════════════════════
-function LeaderboardScreen({ leaderboard, resultsIn, onBack, count }) {
+function LeaderboardScreen({ leaderboard, resultsIn, onBack, count, onSelectPlayer }) {
   const podiumColors = [CT.yellow, CT.blue, CT.red];
   const anyScored = leaderboard.some(p => p.scored > 0 || p.champCorrect || p.ruCorrect);
   return <>
@@ -1019,7 +1029,7 @@ function LeaderboardScreen({ leaderboard, resultsIn, onBack, count }) {
           {[1,0,2].map(i=>{
             const p = leaderboard[i]; if (!p) return <div key={i}/>;
             const place = i+1, c = podiumColors[i], big = i===0;
-            return <div key={p.name} style={{background:c, color:c===CT.yellow?CT.ink:"#fff", padding:big?"18px 12px 16px":"14px 10px 12px", textAlign:"center", border:`1.5px solid ${CT.ink}`}}>
+            return <div key={p.name} onClick={()=>onSelectPlayer && onSelectPlayer(p.name)} role="button" tabIndex={0} onKeyDown={e=>{if((e.key==="Enter"||e.key===" ")&&onSelectPlayer){e.preventDefault();onSelectPlayer(p.name);}}} style={{background:c, color:c===CT.yellow?CT.ink:"#fff", padding:big?"18px 12px 16px":"14px 10px 12px", textAlign:"center", border:`1.5px solid ${CT.ink}`, cursor:"pointer"}}>
               <div style={{fontFamily:FF.display, fontWeight:800, fontSize:big?56:42, lineHeight:0.9, letterSpacing:"-0.04em"}}>{place}</div>
               <div style={{height:1, background:c===CT.yellow?"rgba(10,10,10,0.3)":"rgba(255,255,255,0.4)", margin:"8px 0"}}/>
               <div style={{fontFamily:FF.sans, fontWeight:700, fontSize:big?13:12, letterSpacing:"-0.01em"}}>{p.name}</div>
@@ -1037,7 +1047,7 @@ function LeaderboardScreen({ leaderboard, resultsIn, onBack, count }) {
           <Kicker>FULL TABLE</Kicker><div style={{flex:1, height:1, background:CT.rule2}}/>
         </div>
         {leaderboard.map((p,i)=>(
-          <div key={p.name} style={{display:"grid", gridTemplateColumns:"32px 1fr auto auto", gap:10, alignItems:"center", padding:"12px 0", borderTop:`1px solid ${CT.rule}`}}>
+          <div key={p.name} onClick={()=>onSelectPlayer && onSelectPlayer(p.name)} role="button" tabIndex={0} onKeyDown={e=>{if((e.key==="Enter"||e.key===" ")&&onSelectPlayer){e.preventDefault();onSelectPlayer(p.name);}}} style={{display:"grid", gridTemplateColumns:"32px 1fr auto auto", gap:10, alignItems:"center", padding:"12px 0", borderTop:`1px solid ${CT.rule}`, cursor:"pointer"}}>
             <Num style={{fontSize:13, fontWeight:700, color:i<3?CT.red:CT.faint}}>{(i+1).toString().padStart(2,"0")}</Num>
             <div style={{minWidth:0}}>
               <span style={{fontFamily:FF.sans, fontWeight:i<3?700:500, fontSize:14, color:CT.ink}}>{p.name}</span>
@@ -1052,8 +1062,227 @@ function LeaderboardScreen({ leaderboard, resultsIn, onBack, count }) {
   </>;
 }
 
+// ═══ PLAYER DETAIL SCREEN ════════════════════════════════════════════════════
+function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resultBonus, onBack }) {
+  const [stage, setStage] = useState("R32");
+  const [activeGrp, setActiveGrp] = useState("A");
+
+  if (!user) {
+    return <>
+      <div style={{background:CT.ink, color:"#fff", padding:"14px 22px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+        <button onClick={onBack} style={{background:"transparent", border:`1.5px solid #555`, color:"#fff", fontFamily:FF.sans, fontSize:11, fontWeight:600, padding:"5px 10px", cursor:"pointer", letterSpacing:"0.04em", textTransform:"uppercase"}}>← Back</button>
+        <Wordmark inverse/>
+      </div>
+      <div style={{padding:"40px 22px"}}>
+        <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"40px 22px", textAlign:"center"}}>
+          <Display size={24} color={CT.muted}>Player not found.</Display>
+        </div>
+      </div>
+    </>;
+  }
+
+  const groupPreds = user.groupPreds || {};
+  const userKOW = user.userKOW || {};
+  const bonusChampion = user.bonusChampion || "";
+  const bonusRunnerUp = user.bonusRunnerUp || "";
+  const score = calcPoints(user, resultGroup, resultKOW, resultBonus);
+
+  const realStandings = computeStandings(resultGroup);
+  const actualKOMatches = buildKO(realStandings, resultB3, resultKOW);
+
+  const champActual = resultBonus?.champion || "";
+  const ruActual = resultBonus?.runnerUp || "";
+  const champCorrect = !!(bonusChampion && champActual && bonusChampion === champActual);
+  const ruCorrect = !!(bonusRunnerUp && ruActual && bonusRunnerUp === ruActual);
+  const stages = ["R32","R16","QF","SF","3P","F"];
+  const stageColor = STAGE_COLORS[stage];
+  const groupMatches = GROUP_MATCHES.filter(m => m.grp === activeGrp);
+  const stageMatches = actualKOMatches.filter(m => m.stage === stage);
+
+  const pickLabel = (m, p) => p === "home" ? m.home : p === "away" ? m.away : p === "draw" ? "Draw" : "—";
+
+  return <>
+    <div style={{background:CT.ink, color:"#fff", padding:"14px 22px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+      <button onClick={onBack} style={{background:"transparent", border:`1.5px solid #555`, color:"#fff", fontFamily:FF.sans, fontSize:11, fontWeight:600, padding:"5px 10px", cursor:"pointer", letterSpacing:"0.04em", textTransform:"uppercase"}}>← Back</button>
+      <Wordmark inverse/>
+    </div>
+    <div style={{display:"flex", height:6}}>
+      <div style={{flex:1, background:CT.red}}/><div style={{flex:1, background:CT.blue}}/>
+      <div style={{flex:1, background:CT.green}}/><div style={{flex:1, background:CT.yellow}}/>
+    </div>
+
+    <div style={{padding:"22px 22px 0"}}>
+      <Kicker>AUDIT TRAIL · READ-ONLY</Kicker>
+      <Display size={32} style={{display:"block", marginTop:4}}>{name}.</Display>
+      <div style={{marginTop:8, fontFamily:FF.sans, fontSize:13, color:CT.muted}}>
+        {Object.keys(groupPreds).length}/72 group · {Object.keys(userKOW).length}/{KO_DEF.length} bracket · {(bonusChampion?1:0)+(bonusRunnerUp?1:0)}/2 bonus
+      </div>
+    </div>
+
+    <div style={{padding:"18px 22px 0"}}>
+      <div style={{background:CT.ink, color:"#fff", padding:"18px"}}>
+        <Kicker color={CT.yellow}>TOTAL CREDITS</Kicker>
+        <div style={{display:"flex", alignItems:"baseline", justifyContent:"space-between", marginTop:4}}>
+          <Display size={56} color="#fff">{score.total}</Display>
+          <Num style={{fontSize:12, color:"#9c9789", fontWeight:600, letterSpacing:"0.08em"}}>PTS</Num>
+        </div>
+        <div style={{marginTop:14, paddingTop:14, borderTop:"1px solid rgba(255,255,255,0.2)", display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10}}>
+          <div>
+            <Kicker color={CT.red}>GROUP</Kicker>
+            <div style={{marginTop:4}}><Num style={{fontSize:22, color:"#fff", fontWeight:700}}>{score.groupPts}</Num></div>
+          </div>
+          <div>
+            <Kicker color={CT.blue}>KNOCKOUT</Kicker>
+            <div style={{marginTop:4}}><Num style={{fontSize:22, color:"#fff", fontWeight:700}}>{score.knockoutPts}</Num></div>
+          </div>
+          <div>
+            <Kicker color={CT.yellow}>BONUS</Kicker>
+            <div style={{marginTop:4}}><Num style={{fontSize:22, color:"#fff", fontWeight:700}}>{score.bonusPts}</Num></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style={{padding:"24px 22px 0"}}>
+      <div style={{display:"flex", alignItems:"baseline", gap:10, marginBottom:10}}>
+        <Kicker color={CT.yellow}>BONUS PICKS</Kicker><div style={{flex:1, height:1, background:CT.rule2}}/>
+      </div>
+
+      <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10}}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+          <Kicker color={CT.yellow}>CHAMPION · +{CHAMPION_BONUS_PTS} PTS</Kicker>
+          {champActual && bonusChampion && <span style={{fontFamily:FF.mono, fontSize:10, fontWeight:700, letterSpacing:"0.12em", padding:"2px 6px", background:champCorrect?CT.green:CT.red, color:"#fff"}}>{champCorrect?"CORRECT":"MISSED"}</span>}
+        </div>
+        <div style={{marginTop:10, display:"flex", alignItems:"center", gap:10}}>
+          {bonusChampion ? <><Flag team={bonusChampion} size={20}/><span style={{fontFamily:FF.sans, fontWeight:700, fontSize:14}}>{bonusChampion}</span></>
+            : <span style={{fontFamily:FF.sans, fontSize:13, color:CT.faint}}>No pick made.</span>}
+        </div>
+        {champActual && <div style={{marginTop:8, paddingTop:8, borderTop:`1px solid ${CT.rule}`}}><Kicker>ACTUAL: <span style={{color:CT.ink}}>{champActual}</span></Kicker></div>}
+        {bonusChampion && champActual && <div style={{marginTop:6}}><Kicker>EARNED: <span style={{color:CT.ink}}>{champCorrect?`+${CHAMPION_BONUS_PTS} pts`:"0 pts"}</span></Kicker></div>}
+      </div>
+
+      <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10}}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+          <Kicker color={CT.blue}>RUNNER-UP · +{RUNNERUP_BONUS_PTS} PTS</Kicker>
+          {ruActual && bonusRunnerUp && <span style={{fontFamily:FF.mono, fontSize:10, fontWeight:700, letterSpacing:"0.12em", padding:"2px 6px", background:ruCorrect?CT.green:CT.red, color:"#fff"}}>{ruCorrect?"CORRECT":"MISSED"}</span>}
+        </div>
+        <div style={{marginTop:10, display:"flex", alignItems:"center", gap:10}}>
+          {bonusRunnerUp ? <><Flag team={bonusRunnerUp} size={20}/><span style={{fontFamily:FF.sans, fontWeight:700, fontSize:14}}>{bonusRunnerUp}</span></>
+            : <span style={{fontFamily:FF.sans, fontSize:13, color:CT.faint}}>No pick made.</span>}
+        </div>
+        {ruActual && <div style={{marginTop:8, paddingTop:8, borderTop:`1px solid ${CT.rule}`}}><Kicker>ACTUAL: <span style={{color:CT.ink}}>{ruActual}</span></Kicker></div>}
+        {bonusRunnerUp && ruActual && <div style={{marginTop:6}}><Kicker>EARNED: <span style={{color:CT.ink}}>{ruCorrect?`+${RUNNERUP_BONUS_PTS} pts`:"0 pts"}</span></Kicker></div>}
+      </div>
+    </div>
+
+    <div style={{padding:"18px 22px 0"}}>
+      <div style={{display:"flex", alignItems:"baseline", gap:10, marginBottom:10}}>
+        <Kicker color={CT.red}>GROUP STAGE PICKS</Kicker><div style={{flex:1, height:1, background:CT.rule2}}/>
+      </div>
+      <div style={{display:"grid", gridTemplateColumns:"repeat(12, 1fr)", gap:3, marginBottom:14}}>
+        {GROUPS.map(g => {
+          const on = activeGrp === g, c = GROUP_COLORS[g];
+          const picked = GROUP_MATCHES.filter(m => m.grp===g && groupPreds[m.id]).length;
+          const complete = picked === 6;
+          return <button key={g} onClick={()=>setActiveGrp(g)} style={{aspectRatio:"1", background:on?c:"#fff", color:on?"#fff":CT.ink, border:`1.5px solid ${on?c:CT.rule2}`, cursor:"pointer", borderRadius:0, fontFamily:FF.display, fontWeight:800, fontSize:14, letterSpacing:"-0.03em", position:"relative", padding:0}}>
+            {g}{complete && !on && <span style={{position:"absolute", top:1, right:2, width:5, height:5, background:c, borderRadius:"50%"}}/>}
+          </button>;
+        })}
+      </div>
+      {groupMatches.map(m => {
+        const pick = groupPreds[m.id];
+        const actual = resultGroup[m.id];
+        const ok = pick && actual && pick === actual;
+        const earned = ok ? (actual === "draw" ? GROUP_WIN_PTS + DRAW_BONUS_PTS : GROUP_WIN_PTS) : 0;
+        const c = GROUP_COLORS[m.grp];
+        return <div key={m.id} style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10}}>
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+            <div style={{display:"flex", gap:8, alignItems:"center"}}>
+              <Num style={{fontSize:10, fontWeight:700, color:c, letterSpacing:"0.04em"}}>M{m.id.toString().padStart(2,"0")}</Num>
+              <Kicker>{m.time} MYT</Kicker>
+            </div>
+            {actual && pick && <span style={{fontFamily:FF.mono, fontSize:10, fontWeight:700, letterSpacing:"0.12em", padding:"2px 6px", background:ok?CT.green:CT.red, color:"#fff"}}>{ok?"CORRECT":"MISSED"}</span>}
+          </div>
+          <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10, marginBottom:10}}>
+            <TeamCell team={m.home}/><Serif size={13} color={CT.faint}>vs</Serif><TeamCell team={m.away} reverse/>
+          </div>
+          <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
+            <div>
+              <Kicker>PICK</Kicker>
+              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:CT.ink}}>{pick ? pickLabel(m, pick) : "—"}</div>
+            </div>
+            <div>
+              <Kicker>ACTUAL</Kicker>
+              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:actual?CT.ink:CT.faint}}>{actual ? pickLabel(m, actual) : "—"}</div>
+            </div>
+            <div>
+              <Kicker>EARNED</Kicker>
+              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:700, color:earned>0?CT.green:CT.ink}}>{actual && pick ? `${earned} pts` : "—"}</div>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>
+
+    <div style={{padding:"18px 22px 36px"}}>
+      <div style={{display:"flex", alignItems:"baseline", gap:10, marginBottom:10}}>
+        <Kicker color={CT.blue}>BRACKET PICKS</Kicker><div style={{flex:1, height:1, background:CT.rule2}}/>
+      </div>
+      <div style={{display:"flex", gap:4, overflowX:"auto", paddingBottom:6, marginBottom:14}}>
+        {stages.map(s => {
+          const sm = actualKOMatches.filter(m => m.stage === s);
+          const done = sm.filter(m => userKOW[`w_${m.id}`]).length;
+          const on = stage === s, c = STAGE_COLORS[s];
+          return <button key={s} onClick={()=>setStage(s)} style={{padding:"7px 12px", flexShrink:0, background:on?c:"transparent", color:on?"#fff":CT.ink, border:`1.5px solid ${on?c:CT.ink}`, cursor:"pointer", borderRadius:0, fontFamily:FF.sans, fontWeight:700, fontSize:11, letterSpacing:"0.04em", textTransform:"uppercase", display:"flex", alignItems:"center", gap:6}}>
+            {s} <Num style={{fontSize:9, opacity:0.75}}>{done}/{sm.length}</Num>
+          </button>;
+        })}
+      </div>
+      <div style={{display:"flex", alignItems:"baseline", gap:12, marginBottom:14}}>
+        <Serif size={22} color={stageColor}>{STAGE_LABEL[stage]}</Serif>
+        <div style={{flex:1, height:2, background:stageColor}}/>
+        <Kicker color={stageColor}>{STAGE_POINTS[stage]} PTS / WIN</Kicker>
+      </div>
+      {stageMatches.map(m => {
+        const pick = userKOW[`w_${m.id}`];
+        const actual = resultKOW[`w_${m.id}`];
+        const ok = pick && actual && pick === actual;
+        const earned = ok ? (STAGE_POINTS[m.stage] || 0) : 0;
+        return <div key={m.id} style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10}}>
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+            <div style={{display:"flex", gap:8, alignItems:"center"}}>
+              <Num style={{fontSize:10, fontWeight:700, color:stageColor, letterSpacing:"0.04em"}}>M{m.id}</Num>
+              <Kicker>{m.time} MYT</Kicker>
+            </div>
+            {actual && pick && <span style={{fontFamily:FF.mono, fontSize:10, fontWeight:700, letterSpacing:"0.12em", padding:"2px 6px", background:ok?CT.green:CT.red, color:"#fff"}}>{ok?"CORRECT":"MISSED"}</span>}
+          </div>
+          {m.home && m.away ? <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10, marginBottom:10}}>
+            <TeamCell team={m.home}/><Serif size={13} color={CT.faint}>vs</Serif><TeamCell team={m.away} reverse/>
+          </div> : <div style={{padding:"6px 0 10px", textAlign:"center"}}>
+            <Serif size={13} color={CT.faint}>TBD — teams not yet resolved.</Serif>
+          </div>}
+          <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
+            <div>
+              <Kicker>PICK</Kicker>
+              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:pick?CT.ink:CT.faint}}>{pick || "—"}</div>
+            </div>
+            <div>
+              <Kicker>ACTUAL</Kicker>
+              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:actual?CT.ink:CT.faint}}>{actual || "—"}</div>
+            </div>
+            <div>
+              <Kicker>EARNED</Kicker>
+              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:700, color:earned>0?CT.green:CT.ink}}>{actual && pick ? `${earned} pts` : "—"}</div>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>
+  </>;
+}
+
 // ═══ ADMIN PANEL ═════════════════════════════════════════════════════════════
-function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, allUsers, leaderboard, onSaveResults, onSaveSettings, onDeleteUser, onBack, showToast }) {
+function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, allUsers, leaderboard, onSaveResults, onSaveSettings, onDeleteUser, onBack, showToast, onSelectPlayer }) {
   const [adminTab, setAdminTab] = useState("settings");
   const [activeGrp, setActiveGrp] = useState("A");
   const [activeKOStage, setActiveKOStage] = useState("R32");
@@ -1295,7 +1524,7 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, a
         {leaderboard.length===0 ? <div style={{background:"#fff", border:`1.5px solid ${CT.rule2}`, padding:"40px", textAlign:"center", color:CT.faint}}>No players yet.</div>
           : leaderboard.map(u=>(
           <div key={u.name} style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", background:"#fff", border:`1.5px solid ${CT.rule2}`, marginBottom:6}}>
-            <div style={{display:"flex", alignItems:"center", gap:10}}>
+            <div onClick={()=>onSelectPlayer && onSelectPlayer(u.name)} role="button" tabIndex={0} onKeyDown={e=>{if((e.key==="Enter"||e.key===" ")&&onSelectPlayer){e.preventDefault();onSelectPlayer(u.name);}}} style={{display:"flex", alignItems:"center", gap:10, flex:1, cursor:"pointer"}}>
               <div style={{width:30, height:30, background:CT.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:FF.display, fontWeight:800, fontSize:13}}>{u.name[0].toUpperCase()}</div>
               <div>
                 <div style={{fontFamily:FF.sans, fontWeight:700, fontSize:13}}>{u.name}</div>
