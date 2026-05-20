@@ -243,7 +243,7 @@ function buildKO(standings, b3, koW) {
 const USERS_KEY = "wc2026_users_v6";
 const RESULTS_KEY = "wc2026_results_v6";
 const SETTINGS_KEY = "wc2026_settings_v6";
-const ADMIN_PW = "wc2026admin";
+const ADMIN_PW = "Bullgy@2026";
 const DEFAULT_SETTINGS = { registrationLocked:false };
 
 function calcPoints(userData, rGroup, rKO, rBonus) {
