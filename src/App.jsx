@@ -177,8 +177,29 @@ const KO_DEF = [
 
 const BEST3RD_MATCHES = KO_DEF.filter(m => m.awaySlot?.type === "best3rd");
 const GROUPS = ["A","B","C","D","E","F","G","H","I","J","K","L"];
-const GROUP_MATCHES = GROUP_RAW.map(m => ({ ...m, stage:`Group ${m.grp}`, ...etToMYT(m.date, m.et) }));
 const STAGE_LABEL = { R32:"Round of 32", R16:"Round of 16", QF:"Quarterfinal", SF:"Semifinal", "3P":"Third Place", F:"Final" };
+const STAGE_POINTS = { R32:5, R16:10, QF:20, SF:35, "3P":25, F:60 };
+const GROUP_WIN_PTS = 3;
+const DRAW_BONUS_PTS = 2;
+const CHAMPION_BONUS_PTS = 40;
+const RUNNERUP_BONUS_PTS = 20;
+const ALL_TEAMS = Object.keys(FLAG_CODE).sort();
+
+// ─── KICKOFF / PER-MATCH LOCKING ─────────────────────────────────────────────
+// Tournament window June–July 2026 is fully within EDT (UTC-4).
+function getKickoffUTC(dateStr, timeStr) {
+  const isPM = timeStr.includes("p.m."), isAM = timeStr.includes("a.m.");
+  const clean = timeStr.replace(/\s?(a\.m\.|p\.m\.)/, "").trim();
+  let [h, m] = clean.includes(":") ? clean.split(":").map(Number) : [parseInt(clean), 0];
+  if (isNaN(m)) m = 0;
+  if (isPM && h !== 12) h += 12; if (isAM && h === 12) h = 0;
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, mo-1, d, h+4, m));
+}
+const GROUP_MATCHES = GROUP_RAW.map(m => ({ ...m, stage:`Group ${m.grp}`, ...etToMYT(m.date, m.et), kickoff: getKickoffUTC(m.date, m.et) }));
+const KO_KICKOFFS = Object.fromEntries(KO_DEF.map(m => [m.id, getKickoffUTC(m.date, m.et)]));
+const FIRST_KICKOFF = GROUP_MATCHES.reduce((a,b) => a.kickoff < b.kickoff ? a : b).kickoff;
+const isLocked = (kickoff, now) => now >= kickoff;
 
 // ─── STANDINGS ───────────────────────────────────────────────────────────────
 function computeStandings(preds) {
@@ -223,22 +244,49 @@ const USERS_KEY = "wc2026_users_v6";
 const RESULTS_KEY = "wc2026_results_v6";
 const SETTINGS_KEY = "wc2026_settings_v6";
 const ADMIN_PW = "wc2026admin";
-const DEFAULT_SETTINGS = { registrationLocked:false, groupOpen:true, groupDeadline:"2026-06-11T07:00:00Z", bracketOpen:false, bracketDeadline:"2026-06-28T15:00:00Z" };
+const DEFAULT_SETTINGS = { registrationLocked:false };
 
-function getPhase(settings) {
-  const now = new Date();
-  const groupOpen = settings.groupOpen && now < new Date(settings.groupDeadline);
-  const bracketOpen = settings.bracketOpen && now < new Date(settings.bracketDeadline);
-  if (bracketOpen) return "bracket";
-  if (groupOpen) return "group";
-  return "closed";
-}
-
-function calcScore(gPreds, koW, rGroup, rKO) {
-  let correct=0, total=0;
-  GROUP_MATCHES.forEach(m => { if (gPreds[m.id]&&rGroup[m.id]) { total++; if (gPreds[m.id]===rGroup[m.id]) correct++; } });
-  KO_DEF.forEach(m => { if (koW[`w_${m.id}`]&&rKO[`w_${m.id}`]) { total++; if (koW[`w_${m.id}`]===rKO[`w_${m.id}`]) correct++; } });
-  return { correct, total, pct: total>0?Math.round((correct/total)*100):null };
+function calcPoints(userData, rGroup, rKO, rBonus) {
+  const gPreds = userData.groupPreds || {};
+  const koW = userData.userKOW || {};
+  let groupPts = 0, knockoutPts = 0, bonusPts = 0;
+  let groupCorrect = 0, knockoutCorrect = 0, scored = 0;
+  GROUP_MATCHES.forEach(m => {
+    const p = gPreds[m.id], a = rGroup[m.id];
+    if (p && a) {
+      scored++;
+      if (p === a) {
+        groupCorrect++;
+        groupPts += GROUP_WIN_PTS;
+        if (a === "draw") groupPts += DRAW_BONUS_PTS;
+      }
+    }
+  });
+  KO_DEF.forEach(m => {
+    const p = koW[`w_${m.id}`], a = rKO[`w_${m.id}`];
+    if (p && a) {
+      scored++;
+      if (p === a) {
+        knockoutCorrect++;
+        knockoutPts += STAGE_POINTS[m.stage] || 0;
+      }
+    }
+  });
+  const champPick = userData.bonusChampion || null;
+  const ruPick = userData.bonusRunnerUp || null;
+  const champActual = rBonus?.champion || null;
+  const ruActual = rBonus?.runnerUp || null;
+  const champCorrect = !!(champPick && champActual && champPick === champActual);
+  const ruCorrect = !!(ruPick && ruActual && ruPick === ruActual);
+  if (champCorrect) bonusPts += CHAMPION_BONUS_PTS;
+  if (ruCorrect) bonusPts += RUNNERUP_BONUS_PTS;
+  return {
+    groupPts, knockoutPts, bonusPts,
+    total: groupPts + knockoutPts + bonusPts,
+    groupCorrect, knockoutCorrect, scored,
+    champCorrect, ruCorrect,
+    champPick, ruPick,
+  };
 }
 
 // ═══ UI PRIMITIVES ═══════════════════════════════════════════════════════════
@@ -309,12 +357,18 @@ export default function App() {
 
   const [groupPreds, setGroupPreds] = useState({});
   const [userKOW, setUserKOW] = useState({});
+  const [bonusChampion, setBonusChampion] = useState("");
+  const [bonusRunnerUp, setBonusRunnerUp] = useState("");
 
   const [allUsers, setAllUsers] = useState({});
   const [resultGroup, setResultGroup] = useState({});
   const [resultB3, setResultB3] = useState({});
   const [resultKOW, setResultKOW] = useState({});
+  const [resultBonus, setResultBonus] = useState({ champion:"", runnerUp:"" });
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
 
   const [subTab, setSubTab] = useState("group");
   const [saved, setSaved] = useState(false);
@@ -326,31 +380,43 @@ export default function App() {
 
   useEffect(() => { (async () => {
     try { const u = await storageGet(USERS_KEY); if (u?.value) setAllUsers(JSON.parse(u.value)); } catch {}
-    try { const r = await storageGet(RESULTS_KEY); if (r?.value) { const d=JSON.parse(r.value); setResultGroup(d.group||{}); setResultB3(d.b3||{}); setResultKOW(d.ko||{}); } } catch {}
+    try { const r = await storageGet(RESULTS_KEY); if (r?.value) { const d=JSON.parse(r.value); setResultGroup(d.group||{}); setResultB3(d.b3||{}); setResultKOW(d.ko||{}); setResultBonus(d.bonus||{champion:"",runnerUp:""}); } } catch {}
     try { const s = await storageGet(SETTINGS_KEY); if (s?.value) setSettings({...DEFAULT_SETTINGS,...JSON.parse(s.value)}); } catch {}
     setLoading(false);
   })(); }, []);
 
   const showToast = msg => { setToast(msg); setTimeout(()=>setToast(""), 2800); };
   const saveUsers = async u => { await storageSet(USERS_KEY, JSON.stringify(u)); setAllUsers(u); };
-  const saveResults = async (grp,b3,ko) => { await storageSet(RESULTS_KEY, JSON.stringify({group:grp,b3,ko})); setResultGroup(grp); setResultB3(b3); setResultKOW(ko); };
+  const saveResults = async (grp,b3,ko,bonus) => { const b = bonus||resultBonus; await storageSet(RESULTS_KEY, JSON.stringify({group:grp,b3,ko,bonus:b})); setResultGroup(grp); setResultB3(b3); setResultKOW(ko); setResultBonus(b); };
   const saveSettings = async s => { await storageSet(SETTINGS_KEY, JSON.stringify(s)); setSettings(s); };
 
-  const phase = getPhase(settings);
+  const bonusLocked = now >= FIRST_KICKOFF;
   const realStandings = computeStandings(resultGroup);
   const realKOMatches = buildKO(realStandings, resultB3, userKOW);
   const userStandings = computeStandings(groupPreds);
 
   const groupDone = GROUP_MATCHES.filter(m=>groupPreds[m.id]).length;
   const koDone = KO_DEF.filter(m=>userKOW[`w_${m.id}`]).length;
-  const totalDone = phase==="group" ? groupDone : phase==="bracket" ? koDone : groupDone+koDone;
-  const totalTotal = phase==="group" ? 72 : phase==="bracket" ? KO_DEF.length : 72+KO_DEF.length;
-  const pct = Math.round(totalDone/Math.max(totalTotal,1)*100);
+  const totalPickable = 72 + KO_DEF.length + 2;
+  const totalDone = groupDone + koDone + (bonusChampion?1:0) + (bonusRunnerUp?1:0);
+  const pct = Math.round(totalDone/totalPickable*100);
 
   const leaderboard = Object.entries(allUsers).map(([name,data]) => {
-    const score = calcScore(data.groupPreds||{}, data.userKOW||{}, resultGroup, resultKOW);
-    return { name, groupDone:Object.keys(data.groupPreds||{}).length, koDone:Object.keys(data.userKOW||{}).length, ...score };
-  }).sort((a,b)=>(a.pct!==null&&b.pct!==null)?b.pct-a.pct:a.pct!==null?-1:b.pct!==null?1:(b.groupDone+b.koDone)-(a.groupDone+a.koDone));
+    const score = calcPoints(data, resultGroup, resultKOW, resultBonus);
+    return {
+      name,
+      groupDone: Object.keys(data.groupPreds||{}).length,
+      koDone: Object.keys(data.userKOW||{}).length,
+      bonusDone: (data.bonusChampion?1:0) + (data.bonusRunnerUp?1:0),
+      ...score,
+    };
+  }).sort((a,b) => {
+    if (b.total !== a.total) return b.total - a.total;
+    if (b.knockoutPts !== a.knockoutPts) return b.knockoutPts - a.knockoutPts;
+    if ((b.champCorrect?1:0) !== (a.champCorrect?1:0)) return (b.champCorrect?1:0) - (a.champCorrect?1:0);
+    if ((b.ruCorrect?1:0) !== (a.ruCorrect?1:0)) return (b.ruCorrect?1:0) - (a.ruCorrect?1:0);
+    return (b.groupDone + b.koDone) - (a.groupDone + a.koDone);
+  });
 
   async function handleNameSubmit() {
     const name = nameInput.trim(); if (!name) return;
@@ -366,46 +432,72 @@ export default function App() {
     const hashed = await hashPin(pinInput);
     if (hashed !== existing.pin) { setAuthError("Incorrect PIN. Try again."); setPinInput(""); return; }
     setUsername(pendingName); setGroupPreds(existing.groupPreds||{}); setUserKOW(existing.userKOW||{});
+    setBonusChampion(existing.bonusChampion||""); setBonusRunnerUp(existing.bonusRunnerUp||"");
     setAuthStep("name"); setAuthError(""); setNameInput(""); setPinInput("");
-    setSubTab(phase==="bracket"?"bracket":"group"); setView("predict");
+    setSubTab("group"); setView("predict");
   }
   async function handleSetPin() {
     if (pinInput.length !== 4 || !/^\d+$/.test(pinInput)) { setAuthError("PIN must be exactly 4 digits."); return; }
     if (pinInput !== pinConfirm) { setAuthError("PINs don't match. Try again."); setPinConfirm(""); return; }
     const hashed = await hashPin(pinInput);
-    const newUser = { pin: hashed, groupPreds:{}, userKOW:{}, createdAt: new Date().toISOString() };
+    const newUser = { pin: hashed, groupPreds:{}, userKOW:{}, bonusChampion:"", bonusRunnerUp:"", createdAt: new Date().toISOString() };
     const upd = {...allUsers, [pendingName]: newUser}; await saveUsers(upd);
-    setUsername(pendingName); setGroupPreds({}); setUserKOW({});
+    setUsername(pendingName); setGroupPreds({}); setUserKOW({}); setBonusChampion(""); setBonusRunnerUp("");
     setAuthStep("name"); setAuthError(""); setNameInput(""); setPinInput(""); setPinConfirm("");
     setSubTab("group"); setView("predict"); showToast("Welcome — your PIN is set.");
   }
   async function handleSave() {
-    const upd = {...allUsers, [username]: { ...allUsers[username], groupPreds, userKOW, savedAt: new Date().toISOString() }};
-    await saveUsers(upd); setSaved(true); showToast("Predictions saved"); setTimeout(()=>setSaved(false),2000);
+    const existing = allUsers[username] || {};
+    const safeGroup = {...(existing.groupPreds||{})};
+    GROUP_MATCHES.forEach(m => { if (!isLocked(m.kickoff, now)) { if (groupPreds[m.id]) safeGroup[m.id] = groupPreds[m.id]; else delete safeGroup[m.id]; } });
+    const safeKO = {...(existing.userKOW||{})};
+    KO_DEF.forEach(m => { if (!isLocked(KO_KICKOFFS[m.id], now)) { const k=`w_${m.id}`; if (userKOW[k]) safeKO[k]=userKOW[k]; else delete safeKO[k]; } });
+    const safeChamp = bonusLocked ? (existing.bonusChampion||"") : bonusChampion;
+    const safeRU = bonusLocked ? (existing.bonusRunnerUp||"") : bonusRunnerUp;
+    const upd = {...allUsers, [username]: { ...existing, groupPreds:safeGroup, userKOW:safeKO, bonusChampion:safeChamp, bonusRunnerUp:safeRU, savedAt: new Date().toISOString() }};
+    await saveUsers(upd);
+    setGroupPreds(safeGroup); setUserKOW(safeKO); setBonusChampion(safeChamp); setBonusRunnerUp(safeRU);
+    setSaved(true); showToast("Predictions saved"); setTimeout(()=>setSaved(false),2000);
   }
   async function handleDeleteUser(name) {
     const upd={...allUsers}; delete upd[name]; await saveUsers(upd); setConfirmDelete(null); showToast(`${name}'s entry deleted`);
   }
-  const setGroupPick = (id,val) => { if (phase==="group") setGroupPreds(p=>({...p,[id]:val})); };
-  const setKOPick = (id,team) => { if (phase==="bracket") setUserKOW(p=>({...p,[`w_${id}`]:team})); };
+  const setGroupPick = (id,val) => {
+    const m = GROUP_MATCHES.find(x => x.id === id); if (!m || isLocked(m.kickoff, now)) return;
+    setGroupPreds(p => ({...p, [id]:val}));
+  };
+  const setKOPick = (id,team) => {
+    if (isLocked(KO_KICKOFFS[id], now)) return;
+    setUserKOW(p => ({...p, [`w_${id}`]: team}));
+  };
+  const setChampionPick = team => { if (!bonusLocked) setBonusChampion(team); };
+  const setRunnerUpPick = team => { if (!bonusLocked) setBonusRunnerUp(team); };
 
   function handleLucky() {
     const rand = arr => arr[Math.floor(Math.random()*arr.length)];
-    if (phase==="group") {
-      const np={...groupPreds}; GROUP_MATCHES.forEach(m => { if (!np[m.id]) np[m.id]=rand(["home","draw","away"]); });
-      setGroupPreds(np); showToast("Group picks auto-filled — review and save.");
-    } else if (phase==="bracket") {
-      const nk={...userKOW}; ["R32","R16","QF","SF","3P","F"].forEach(stage => {
-        KO_DEF.filter(m=>m.stage===stage).forEach(m => {
-          if (!nk[`w_${m.id}`]) {
-            const h=resolveTeam(m.homeSlot,realStandings,resultB3,nk);
-            const a=resolveTeam(m.awaySlot,realStandings,resultB3,nk);
-            const opts=[h,a].filter(Boolean);
-            if (opts.length>0) nk[`w_${m.id}`]=rand(opts);
+    if (subTab === "group") {
+      const np = {...groupPreds};
+      GROUP_MATCHES.forEach(m => { if (!np[m.id] && !isLocked(m.kickoff, now)) np[m.id] = rand(["home","draw","away"]); });
+      setGroupPreds(np); showToast("Open group picks auto-filled — review and save.");
+    } else if (subTab === "bracket") {
+      const nk = {...userKOW};
+      ["R32","R16","QF","SF","3P","F"].forEach(stage => {
+        KO_DEF.filter(m => m.stage === stage).forEach(m => {
+          const k = `w_${m.id}`;
+          if (!nk[k] && !isLocked(KO_KICKOFFS[m.id], now)) {
+            const h = resolveTeam(m.homeSlot, realStandings, resultB3, nk);
+            const a = resolveTeam(m.awaySlot, realStandings, resultB3, nk);
+            const opts = [h, a].filter(Boolean);
+            if (opts.length > 0) nk[k] = rand(opts);
           }
         });
       });
-      setUserKOW(nk); showToast("Bracket auto-filled — review and save.");
+      setUserKOW(nk); showToast("Open bracket picks auto-filled — review and save.");
+    } else if (subTab === "bonus" && !bonusLocked) {
+      const champ = bonusChampion || rand(ALL_TEAMS);
+      if (!bonusChampion) setBonusChampion(champ);
+      if (!bonusRunnerUp) setBonusRunnerUp(rand(ALL_TEAMS.filter(t => t !== champ)));
+      showToast("Bonus picks auto-filled — review and save.");
     }
   }
 
@@ -440,8 +532,10 @@ export default function App() {
       authStep={authStep} authError={authError} pendingName={pendingName}
       onNameSubmit={handleNameSubmit} onPinSubmit={handlePinSubmit} onSetPin={handleSetPin}
       onBack={()=>{setAuthStep("name");setAuthError("");setPinInput("");setPinConfirm("");}}
-      settings={settings} phase={phase} count={Object.keys(allUsers).length}
-      resultsIn={Object.keys(resultGroup).length} onLB={()=>setView("leaderboard")}/>}
+      now={now} count={Object.keys(allUsers).length}
+      resultsIn={Object.keys(resultGroup).length} onLB={()=>setView("leaderboard")} onHTP={()=>setView("howtoplay")}/>}
+
+    {view==="howtoplay" && <HowToPlayScreen onBack={()=>setView(username?"predict":"home")}/>}
 
     {view==="adminLogin" && <div style={{padding:"48px 22px"}}>
       <div style={{background:CT.ink, color:"#fff", padding:"24px 22px"}}>
@@ -458,7 +552,7 @@ export default function App() {
       </div>
     </div>}
 
-    {view==="admin" && <AdminPanel resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} settings={settings} allUsers={allUsers} leaderboard={leaderboard} realStandings={realStandings} onSaveResults={saveResults} onSaveSettings={saveSettings} onDeleteUser={name=>setConfirmDelete(name)} onBack={()=>setView("home")} showToast={showToast}/>}
+    {view==="admin" && <AdminPanel resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} resultBonus={resultBonus} settings={settings} allUsers={allUsers} leaderboard={leaderboard} onSaveResults={saveResults} onSaveSettings={saveSettings} onDeleteUser={name=>setConfirmDelete(name)} onBack={()=>setView("home")} showToast={showToast}/>}
 
     {view==="leaderboard" && <LeaderboardScreen leaderboard={leaderboard} resultsIn={Object.keys(resultGroup).length} onBack={()=>setView(username?"predict":"home")} count={Object.keys(allUsers).length}/>}
 
@@ -467,8 +561,9 @@ export default function App() {
         <div style={{padding:"14px 22px 12px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
           <Wordmark inverse/>
           <div style={{display:"flex", gap:16, alignItems:"center"}}>
-            {phase!=="closed" && <button onClick={handleLucky} style={{background:"transparent", border:"none", color:"#9c9789", fontFamily:FF.sans, fontSize:13, fontWeight:600, cursor:"pointer"}}>Random</button>}
-            {phase!=="closed" && <button onClick={handleSave} style={{background:"transparent", border:"none", color:saved?CT.yellow:"#fff", fontFamily:FF.sans, fontSize:13, fontWeight:700, cursor:"pointer"}}>{saved?"✓ Saved":"Save"}</button>}
+            <button onClick={handleLucky} style={{background:"transparent", border:"none", color:"#9c9789", fontFamily:FF.sans, fontSize:13, fontWeight:600, cursor:"pointer"}}>Random</button>
+            <button onClick={handleSave} style={{background:"transparent", border:"none", color:saved?CT.yellow:"#fff", fontFamily:FF.sans, fontSize:13, fontWeight:700, cursor:"pointer"}}>{saved?"✓ Saved":"Save"}</button>
+            <button onClick={()=>setView("howtoplay")} style={{background:"transparent", border:`1.5px solid #555`, color:"#fff", fontFamily:FF.sans, fontSize:11, fontWeight:600, padding:"5px 10px", cursor:"pointer", letterSpacing:"0.04em", textTransform:"uppercase"}}>Rules</button>
             <button onClick={()=>setView("leaderboard")} style={{background:"transparent", border:`1.5px solid #555`, color:"#fff", fontFamily:FF.sans, fontSize:11, fontWeight:600, padding:"5px 10px", cursor:"pointer", letterSpacing:"0.04em", textTransform:"uppercase"}}>Board</button>
             <button onClick={()=>{setView("home");setUsername("");setNameInput("");}} style={{background:"transparent", border:"none", color:"#9c9789", fontFamily:FF.sans, fontSize:13, fontWeight:600, cursor:"pointer"}}>Exit</button>
           </div>
@@ -477,9 +572,10 @@ export default function App() {
           <div>
             <Serif size={22} color="#fff">{username}</Serif>
             <div style={{marginTop:4}}><Kicker color="#9c9789">
-              {phase==="group"&&`${groupDone}/72 GROUP PICKS`}
-              {phase==="bracket"&&`${koDone}/${KO_DEF.length} BRACKET PICKS`}
-              {phase==="closed"&&"VIEW ONLY"}
+              {subTab==="group" && `${groupDone}/72 GROUP PICKS`}
+              {subTab==="bracket" && `${koDone}/${KO_DEF.length} BRACKET PICKS`}
+              {subTab==="bonus" && `${(bonusChampion?1:0)+(bonusRunnerUp?1:0)}/2 BONUS PICKS`}
+              {subTab==="standings" && `${groupDone}/72 GROUP PICKS`}
             </Kicker></div>
           </div>
           <Num style={{fontSize:18, color:CT.yellow, fontWeight:700}}>{pct}%</Num>
@@ -487,26 +583,25 @@ export default function App() {
         <div style={{height:4, background:"#1a1a1a"}}><div style={{height:4, background:CT.yellow, width:`${pct}%`, transition:"width .3s"}}/></div>
       </div>
 
-      <div style={{display:"flex", background:"#fff", borderBottom:`1.5px solid ${CT.ink}`, padding:"0 22px"}}>
+      <div style={{display:"flex", background:"#fff", borderBottom:`1.5px solid ${CT.ink}`, padding:"0 22px", overflowX:"auto"}}>
         {[
           {id:"group", label:"Group Stage"},
           {id:"standings", label:"Tables"},
-          ...((phase==="bracket"||phase==="closed") ? [{id:"bracket", label:"Bracket"}] : []),
+          {id:"bracket", label:"Bracket"},
+          {id:"bonus", label:"Bonus Picks"},
         ].map(it => {
           const on = subTab===it.id;
           return <button key={it.id} onClick={()=>setSubTab(it.id)} style={{
             padding:"13px 16px 11px", border:"none", background:"transparent", cursor:"pointer", position:"relative",
-            fontFamily:FF.sans, fontSize:13, fontWeight:on?700:500, color:on?CT.ink:CT.muted
+            fontFamily:FF.sans, fontSize:13, fontWeight:on?700:500, color:on?CT.ink:CT.muted, whiteSpace:"nowrap"
           }}>{it.label}{on && <div style={{position:"absolute", left:0, right:0, bottom:-1.5, height:3, background:CT.red}}/>}</button>;
         })}
       </div>
 
-      {phase==="closed" && <div style={{margin:"16px 22px 0", padding:"10px 14px", background:CT.ink, color:"#fff"}}><Kicker color={CT.yellow}>● ALL PREDICTIONS LOCKED</Kicker></div>}
-      {phase==="group" && subTab==="bracket" && <div style={{margin:"16px 22px 0", padding:"10px 14px", background:CT.blueLt||"#c9d2eb", color:CT.blue}}><Kicker color={CT.blue}>● BRACKET OPENS AFTER GROUP STAGE</Kicker></div>}
-
-      {subTab==="group" && <GroupStageTab groupPreds={groupPreds} onPick={setGroupPick} isOpen={phase==="group"} resultGroup={resultGroup}/>}
+      {subTab==="group" && <GroupStageTab groupPreds={groupPreds} onPick={setGroupPick} now={now} resultGroup={resultGroup}/>}
       {subTab==="standings" && <StandingsTab standings={userStandings} groupPreds={groupPreds}/>}
-      {subTab==="bracket" && (phase==="bracket"||phase==="closed") && <BracketTab koMatches={realKOMatches} userKOW={userKOW} setKOPick={setKOPick} isOpen={phase==="bracket"} resultKOW={resultKOW}/>}
+      {subTab==="bracket" && <BracketTab koMatches={realKOMatches} userKOW={userKOW} setKOPick={setKOPick} now={now} resultKOW={resultKOW}/>}
+      {subTab==="bonus" && <BonusPicksTab champion={bonusChampion} runnerUp={bonusRunnerUp} onChampion={setChampionPick} onRunnerUp={setRunnerUpPick} locked={bonusLocked} resultBonus={resultBonus}/>}
     </>}
 
     </div>
@@ -514,9 +609,14 @@ export default function App() {
 }
 
 // ═══ HOME / AUTH SCREEN ══════════════════════════════════════════════════════
-function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, settings, phase, count, resultsIn, onLB }) {
-  const groupDL = fmtMYT(settings.groupDeadline);
-  const bracketDL = fmtMYT(settings.bracketDeadline);
+function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP }) {
+  const firstKickoffMYT = fmtMYT(FIRST_KICKOFF.toISOString());
+  const finalMatch = KO_DEF.find(m => m.stage === "F");
+  const finalKickoff = finalMatch ? getKickoffUTC(finalMatch.date, finalMatch.et) : null;
+  const finalMYT = finalKickoff ? fmtMYT(finalKickoff.toISOString()) : "—";
+  const tournamentStarted = now >= FIRST_KICKOFF;
+  const groupAllStarted = GROUP_MATCHES.every(m => now >= m.kickoff);
+  const koAllStarted = KO_DEF.every(m => now >= KO_KICKOFFS[m.id]);
   return <>
     <div style={{background:CT.ink, padding:"14px 22px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
       <Wordmark inverse/><Kicker color="#9c9789">MYT · KUALA LUMPUR</Kicker>
@@ -539,17 +639,24 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
       </div>
       <div style={{marginTop:20, maxWidth:420}}>
         <span style={{fontFamily:FF.sans, fontSize:14, lineHeight:1.55, color:CT.ink2}}>
-          Pick all 72 group fixtures, then build the full knockout bracket. Highest accuracy across 104 matches wins.
+          Pick all 72 group fixtures, build the full knockout bracket, and lock in your champion + runner-up. Highest credits total across the tournament wins.
         </span>
       </div>
     </div>
 
     <div style={{padding:"0 22px 24px"}}>
       <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
-        <PhaseBlock label="PHASE I" title="Group stage" deadline={groupDL} color={CT.red}
-          state={settings.groupOpen?(new Date()<new Date(settings.groupDeadline)?"OPEN":"EXPIRED"):"CLOSED"}/>
-        <PhaseBlock label="PHASE II" title="Bracket" deadline={bracketDL} color={CT.blue}
-          state={settings.bracketOpen?(new Date()<new Date(settings.bracketDeadline)?"OPEN":"EXPIRED"):"LOCKED"}/>
+        <PhaseBlock label="GROUP STAGE" title="Per-match locking" deadline={`First kickoff · ${firstKickoffMYT}`} color={CT.red}
+          state={groupAllStarted?"CLOSED":"OPEN"}/>
+        <PhaseBlock label="BRACKET" title="Per-match locking" deadline={`Final · ${finalMYT}`} color={CT.blue}
+          state={koAllStarted?"CLOSED":"OPEN"}/>
+      </div>
+      <div style={{marginTop:10, padding:"10px 14px", background:CT.ink, color:"#fff"}}>
+        <Kicker color={CT.yellow}>● BONUS PICKS</Kicker>
+        <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, lineHeight:1.5}}>
+          Pick your Champion (+40 pts) and Runner-up (+20 pts) before the tournament begins. Locks at the first kickoff · {firstKickoffMYT}.
+        </div>
+        {tournamentStarted && <div style={{marginTop:6}}><Kicker color={CT.red}>● BONUS PICKS LOCKED</Kicker></div>}
       </div>
     </div>
 
@@ -611,9 +718,12 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
       </div>
     </div>
 
-    <div style={{padding:"0 22px 24px"}}>
+    <div style={{padding:"0 22px 24px", display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+      <button onClick={onHTP} style={{...inputLight, padding:"12px 16px", cursor:"pointer", textAlign:"left", fontWeight:700, textTransform:"uppercase", fontSize:11, letterSpacing:"0.04em", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+        <span>How to Play</span><span>→</span>
+      </button>
       <button onClick={onLB} style={{...inputLight, padding:"12px 16px", cursor:"pointer", textAlign:"left", fontWeight:700, textTransform:"uppercase", fontSize:11, letterSpacing:"0.04em", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-        <span>View Leaderboard</span><span>→</span>
+        <span>Leaderboard</span><span>→</span>
       </button>
     </div>
 
@@ -623,10 +733,10 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
       </div>
       {[
         ["01",CT.red,"Pick all 72 group stage matches — home win, draw, or away win."],
-        ["02",CT.blue,"Once the group stage closes, build a complete knockout bracket through the final."],
-        ["03",CT.green,"Each phase locks at its deadline. Picks can't be changed after kickoff."],
-        ["04",CT.yellow,"Name + PIN keeps your sheet your own. No emails, no accounts."],
-        ["05",CT.red,"Highest accuracy across 104 fixtures wins."],
+        ["02",CT.blue,"Build the full 32-team knockout bracket, all the way to the final."],
+        ["03",CT.green,"Each match locks at its own kickoff. Picks for matches that haven't started can still be edited."],
+        ["04",CT.yellow,"Bonus picks: choose your Champion (+40 pts) and Runner-up (+20 pts) before the first kickoff."],
+        ["05",CT.red,"Highest credits total across the tournament wins."],
       ].map(([n,c,b])=>(
         <div key={n} style={{display:"grid", gridTemplateColumns:"44px 1fr", padding:"14px 0", borderTop:`1px solid ${CT.rule}`, alignItems:"baseline"}}>
           <Num style={{fontSize:14, fontWeight:700, color:c}}>{n}</Num>
@@ -652,7 +762,7 @@ function PhaseBlock({ label, title, deadline, state, color }) {
 }
 
 // ═══ GROUP STAGE TAB ═════════════════════════════════════════════════════════
-function GroupStageTab({ groupPreds, onPick, isOpen, resultGroup }) {
+function GroupStageTab({ groupPreds, onPick, now, resultGroup }) {
   const [activeGrp, setActiveGrp] = useState("A");
   const matches = GROUP_MATCHES.filter(m=>m.grp===activeGrp);
   const color = GROUP_COLORS[activeGrp];
@@ -705,7 +815,7 @@ function GroupStageTab({ groupPreds, onPick, isOpen, resultGroup }) {
             <div style={{flex:1, height:1, background:CT.rule2}}/>
             <Kicker>{day.items[0].rawDate}</Kicker>
           </div>
-          {day.items.map(m=><GroupCard key={m.id} match={m} pick={groupPreds[m.id]} result={resultGroup[m.id]} onPick={v=>onPick(m.id,v)} isOpen={isOpen} color={color}/>)}
+          {day.items.map(m=><GroupCard key={m.id} match={m} pick={groupPreds[m.id]} result={resultGroup[m.id]} onPick={v=>onPick(m.id,v)} isOpen={!isLocked(m.kickoff, now)} color={color}/>)}
         </div>
       ))}
     </div>
@@ -719,6 +829,7 @@ function GroupCard({ match, pick, result, onPick, isOpen, color }) {
       <div style={{display:"flex", gap:8, alignItems:"center"}}>
         <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{match.id.toString().padStart(2,"0")}</Num>
         <Kicker>{match.time} MYT</Kicker>
+        {!isOpen && <Kicker color={CT.red}>● LOCKED</Kicker>}
       </div>
       <Kicker>{match.venue}</Kicker>
     </div>
@@ -772,7 +883,7 @@ function StandingsCard({ group, table, color }) {
 }
 
 // ═══ BRACKET TAB ═════════════════════════════════════════════════════════════
-function BracketTab({ koMatches, userKOW, setKOPick, isOpen, resultKOW }) {
+function BracketTab({ koMatches, userKOW, setKOPick, now, resultKOW }) {
   const [stage, setStage] = useState("R32");
   const stages = ["R32","R16","QF","SF","3P","F"];
   const stageColor = STAGE_COLORS[stage];
@@ -781,9 +892,12 @@ function BracketTab({ koMatches, userKOW, setKOPick, isOpen, resultKOW }) {
     <div style={{padding:"22px 22px 0"}}>
       <Kicker>THE BRACKET</Kicker>
       <Display size={28} style={{display:"block", marginTop:4}}>Path to glory.</Display>
+      <div style={{marginTop:8, fontFamily:FF.sans, fontSize:13, color:CT.muted, lineHeight:1.5}}>
+        Each match locks at its own kickoff. The final (M104) stays editable until its kickoff.
+      </div>
     </div>
     <div style={{margin:"18px 22px 24px", background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"12px 8px"}}>
-      <BracketVisual koMatches={koMatches} userKOW={userKOW} setKOPick={setKOPick} isOpen={isOpen} resultKOW={resultKOW}/>
+      <BracketVisual koMatches={koMatches} userKOW={userKOW} setKOPick={setKOPick} now={now} resultKOW={resultKOW}/>
     </div>
     <div style={{padding:"0 22px"}}>
       <div style={{display:"flex", gap:4, overflowX:"auto", paddingBottom:4}}>
@@ -802,7 +916,7 @@ function BracketTab({ koMatches, userKOW, setKOPick, isOpen, resultKOW }) {
         <Serif size={22} color={stageColor}>{STAGE_LABEL[stage]}</Serif>
         <div style={{flex:1, height:2, background:stageColor}}/>
       </div>
-      {koMatches.filter(m=>m.stage===stage).map(m=><KOCard key={m.id} match={m} pick={userKOW[`w_${m.id}`]} result={resultKOW[`w_${m.id}`]} onPick={t=>setKOPick(m.id,t)} isOpen={isOpen} color={stageColor}/>)}
+      {koMatches.filter(m=>m.stage===stage).map(m=><KOCard key={m.id} match={m} pick={userKOW[`w_${m.id}`]} result={resultKOW[`w_${m.id}`]} onPick={t=>setKOPick(m.id,t)} isOpen={!isLocked(KO_KICKOFFS[m.id], now)} color={stageColor}/>)}
     </div>
   </div>;
 }
@@ -814,6 +928,7 @@ function KOCard({ match, pick, result, onPick, isOpen, color }) {
       <div style={{display:"flex", gap:8, alignItems:"center"}}>
         <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{match.id}</Num>
         <Kicker>{match.time} MYT</Kicker>
+        {!isOpen && <Kicker color={CT.red}>● LOCKED</Kicker>}
       </div>
       <Kicker>{match.venue}</Kicker>
     </div>
@@ -832,7 +947,7 @@ function KOCard({ match, pick, result, onPick, isOpen, color }) {
   </div>;
 }
 
-function BracketVisual({ koMatches, userKOW, setKOPick, isOpen, resultKOW }) {
+function BracketVisual({ koMatches, userKOW, setKOPick, now, resultKOW }) {
   const STAGE_ORDER = ["R32","R16","QF","SF","F"];
   const byStage = {};
   koMatches.filter(m=>m.stage!=="3P").forEach(m=>{ if(!byStage[m.stage]) byStage[m.stage]=[]; byStage[m.stage].push(m); });
@@ -849,12 +964,13 @@ function BracketVisual({ koMatches, userKOW, setKOPick, isOpen, resultKOW }) {
           <div style={{height:TOTAL, display:"flex", flexDirection:"column"}}>
             {(byStage[s]||[]).map(m=>{
               const winner = userKOW[`w_${m.id}`], actualW = resultKOW[`w_${m.id}`];
+              const matchOpen = !isLocked(KO_KICKOFFS[m.id], now);
               return <div key={m.id} style={{height:MH[s], display:"flex", alignItems:"center", flexShrink:0}}>
                 <div style={{width:"100%", border:`1px solid ${CT.rule2}`}}>
                   {[m.home, m.away].map((team,ti)=>{
                     const isW = winner===team, isL = winner && winner!==team;
                     const correct = actualW && isW && actualW===winner, wrong = actualW && isW && actualW!==winner;
-                    return <div key={ti} onClick={()=>isOpen&&team&&setKOPick(m.id,team)} style={{display:"flex", alignItems:"center", gap:4, padding:"3px 5px", borderBottom: ti===0?`1px solid ${CT.rule}`:"none", background: isW ? (correct?CT.green:wrong?CT.red:c) : "transparent", color: isW?"#fff":CT.ink, opacity: isL?0.35:1, cursor:(isOpen&&team)?"pointer":"default"}}>
+                    return <div key={ti} onClick={()=>matchOpen&&team&&setKOPick(m.id,team)} style={{display:"flex", alignItems:"center", gap:4, padding:"3px 5px", borderBottom: ti===0?`1px solid ${CT.rule}`:"none", background: isW ? (correct?CT.green:wrong?CT.red:c) : "transparent", color: isW?"#fff":CT.ink, opacity: isL?0.35:1, cursor:(matchOpen&&team)?"pointer":"default"}}>
                       {team ? <Flag team={team} size={9}/> : <div style={{width:13, height:9, background:CT.rule}}/>}
                       <span style={{fontFamily:FF.display, fontWeight:isW?700:600, fontSize:10, letterSpacing:"-0.02em", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1}}>{team ? (team.length>10?shortName(team).slice(0,10):team) : "—"}</span>
                     </div>;
@@ -872,6 +988,7 @@ function BracketVisual({ koMatches, userKOW, setKOPick, isOpen, resultKOW }) {
 // ═══ LEADERBOARD SCREEN ══════════════════════════════════════════════════════
 function LeaderboardScreen({ leaderboard, resultsIn, onBack, count }) {
   const podiumColors = [CT.yellow, CT.blue, CT.red];
+  const anyScored = leaderboard.some(p => p.scored > 0 || p.champCorrect || p.ruCorrect);
   return <>
     <div style={{background:CT.ink, color:"#fff", padding:"14px 22px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
       <button onClick={onBack} style={{background:"transparent", border:`1.5px solid #555`, color:"#fff", fontFamily:FF.sans, fontSize:11, fontWeight:600, padding:"5px 10px", cursor:"pointer", letterSpacing:"0.04em", textTransform:"uppercase"}}>← Back</button>
@@ -884,13 +1001,13 @@ function LeaderboardScreen({ leaderboard, resultsIn, onBack, count }) {
     <div style={{padding:"22px 22px 0"}}>
       <Kicker>LIVE STANDINGS</Kicker>
       <Display size={32} style={{display:"block", marginTop:4}}>Leaderboard.</Display>
-      <div style={{marginTop:8, fontFamily:FF.sans, fontSize:13, color:CT.muted}}>{count} players · {resultsIn}/72 group results entered</div>
+      <div style={{marginTop:8, fontFamily:FF.sans, fontSize:13, color:CT.muted}}>{count} players · {resultsIn}/72 group results entered · ranked by total credits</div>
     </div>
 
-    {resultsIn===0 ? <div style={{padding:"40px 22px"}}>
+    {!anyScored ? <div style={{padding:"40px 22px"}}>
       <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"40px 22px", textAlign:"center"}}>
-        <Display size={24} color={CT.muted}>No results yet.</Display>
-        <div style={{marginTop:10, fontSize:13, color:CT.muted}}>Accuracy appears once admin enters match results.</div>
+        <Display size={24} color={CT.muted}>No points yet.</Display>
+        <div style={{marginTop:10, fontSize:13, color:CT.muted}}>Credits accumulate as the admin enters match results.</div>
       </div>
     </div> : leaderboard.length===0 ? <div style={{padding:"40px 22px"}}>
       <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"40px 22px", textAlign:"center"}}>
@@ -907,7 +1024,8 @@ function LeaderboardScreen({ leaderboard, resultsIn, onBack, count }) {
               <div style={{height:1, background:c===CT.yellow?"rgba(10,10,10,0.3)":"rgba(255,255,255,0.4)", margin:"8px 0"}}/>
               <div style={{fontFamily:FF.sans, fontWeight:700, fontSize:big?13:12, letterSpacing:"-0.01em"}}>{p.name}</div>
               <div style={{marginTop:6}}>
-                {p.pct!==null ? <Num style={{fontSize:big?22:18, fontWeight:700}}>{p.pct}<span style={{opacity:0.7, fontSize:11}}>%</span></Num> : <Num style={{fontSize:big?16:13, fontWeight:600, opacity:0.8}}>{p.groupDone+p.koDone} picks</Num>}
+                <Num style={{fontSize:big?24:20, fontWeight:700}}>{p.total}</Num>
+                <div style={{marginTop:2, fontFamily:FF.mono, fontSize:9, fontWeight:600, letterSpacing:"0.1em", opacity:0.85}}>PTS</div>
               </div>
             </div>;
           })}
@@ -921,10 +1039,12 @@ function LeaderboardScreen({ leaderboard, resultsIn, onBack, count }) {
         {leaderboard.map((p,i)=>(
           <div key={p.name} style={{display:"grid", gridTemplateColumns:"32px 1fr auto auto", gap:10, alignItems:"center", padding:"12px 0", borderTop:`1px solid ${CT.rule}`}}>
             <Num style={{fontSize:13, fontWeight:700, color:i<3?CT.red:CT.faint}}>{(i+1).toString().padStart(2,"0")}</Num>
-            <span style={{fontFamily:FF.sans, fontWeight:i<3?700:500, fontSize:14, color:CT.ink}}>{p.name}</span>
+            <div style={{minWidth:0}}>
+              <span style={{fontFamily:FF.sans, fontWeight:i<3?700:500, fontSize:14, color:CT.ink}}>{p.name}</span>
+              <div style={{marginTop:2}}><Kicker>G {p.groupPts} · KO {p.knockoutPts} · BONUS {p.bonusPts}</Kicker></div>
+            </div>
             <Num style={{fontSize:10, color:CT.muted}}>{p.groupDone}/72 · {p.koDone}/{KO_DEF.length}</Num>
-            {p.pct!==null ? <Num style={{fontSize:i===0?20:16, fontWeight:700, color:i===0?CT.red:CT.ink}}>{p.pct}<span style={{fontSize:10, color:CT.faint}}>%</span></Num>
-              : <Num style={{fontSize:11, color:CT.muted}}>—</Num>}
+            <Num style={{fontSize:i===0?20:16, fontWeight:700, color:i===0?CT.red:CT.ink}}>{p.total}<span style={{fontSize:10, color:CT.faint, marginLeft:2}}>pts</span></Num>
           </div>
         ))}
       </div>
@@ -933,8 +1053,8 @@ function LeaderboardScreen({ leaderboard, resultsIn, onBack, count }) {
 }
 
 // ═══ ADMIN PANEL ═════════════════════════════════════════════════════════════
-function AdminPanel({ resultGroup, resultB3, resultKOW, settings, allUsers, leaderboard, realStandings, onSaveResults, onSaveSettings, onDeleteUser, onBack, showToast }) {
-  const [adminTab, setAdminTab] = useState("phase");
+function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, allUsers, leaderboard, onSaveResults, onSaveSettings, onDeleteUser, onBack, showToast }) {
+  const [adminTab, setAdminTab] = useState("settings");
   const [activeGrp, setActiveGrp] = useState("A");
   const [activeKOStage, setActiveKOStage] = useState("R32");
   const [localSettings, setLocalSettings] = useState({...settings});
@@ -943,13 +1063,13 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, settings, allUsers, lead
 
   const adminStandings = computeStandings(resultGroup);
   const adminKOMatches = buildKO(adminStandings, localB3, localKOW);
-  const phase = getPhase(localSettings);
 
-  async function saveGrp(id,val) { const r={...resultGroup,[id]:val}; await onSaveResults(r,localB3,localKOW); showToast("Result saved"); }
-  async function clearGrp(id) { const r={...resultGroup}; delete r[id]; await onSaveResults(r,localB3,localKOW); showToast("Cleared"); }
-  async function saveB3(key,team) { const nb={...localB3,[key]:team}; setLocalB3(nb); await onSaveResults(resultGroup,nb,localKOW); showToast("3rd place team assigned"); }
-  async function saveKO(mid,team) { const nk={...localKOW,[`w_${mid}`]:team}; setLocalKOW(nk); await onSaveResults(resultGroup,localB3,nk); showToast("Result saved"); }
-  async function clearKO(mid) { const nk={...localKOW}; delete nk[`w_${mid}`]; setLocalKOW(nk); await onSaveResults(resultGroup,localB3,nk); showToast("Cleared"); }
+  async function saveGrp(id,val) { const r={...resultGroup,[id]:val}; await onSaveResults(r,localB3,localKOW,resultBonus); showToast("Result saved"); }
+  async function clearGrp(id) { const r={...resultGroup}; delete r[id]; await onSaveResults(r,localB3,localKOW,resultBonus); showToast("Cleared"); }
+  async function saveB3(key,team) { const nb={...localB3,[key]:team}; setLocalB3(nb); await onSaveResults(resultGroup,nb,localKOW,resultBonus); showToast("3rd place team assigned"); }
+  async function saveKO(mid,team) { const nk={...localKOW,[`w_${mid}`]:team}; setLocalKOW(nk); await onSaveResults(resultGroup,localB3,nk,resultBonus); showToast("Result saved"); }
+  async function clearKO(mid) { const nk={...localKOW}; delete nk[`w_${mid}`]; setLocalKOW(nk); await onSaveResults(resultGroup,localB3,nk,resultBonus); showToast("Cleared"); }
+  async function saveBonus(field, team) { const nb = {...resultBonus, [field]: team}; await onSaveResults(resultGroup, localB3, localKOW, nb); showToast("Bonus result saved"); }
   async function handleSaveSettings() { await onSaveSettings(localSettings); showToast("Settings saved"); }
   async function resetBracketPicks() { const upd={}; Object.entries(allUsers).forEach(([name,data])=>{ upd[name]={...data,userKOW:{}}; }); await storageSet(USERS_KEY, JSON.stringify(upd)); showToast("All bracket picks reset"); }
 
@@ -963,13 +1083,13 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, settings, allUsers, lead
         <div>
           <Kicker color={CT.yellow}>ADMIN</Kicker>
           <div style={{fontFamily:FF.display, fontWeight:800, fontSize:18, color:"#fff", marginTop:2, letterSpacing:"-0.02em"}}>Control panel</div>
-          <div style={{marginTop:4}}><Kicker color="#9c9789">{Object.keys(resultGroup).length}/72 GROUP · {Object.keys(localKOW).length} KO · {Object.keys(allUsers).length} PLAYERS · {phase.toUpperCase()}</Kicker></div>
+          <div style={{marginTop:4}}><Kicker color="#9c9789">{Object.keys(resultGroup).length}/72 GROUP · {Object.keys(localKOW).length} KO · {Object.keys(allUsers).length} PLAYERS · PER-MATCH LOCKING</Kicker></div>
         </div>
       </div>
     </div>
 
     <div style={{background:"#fff", borderBottom:`1.5px solid ${CT.ink}`, display:"flex", overflowX:"auto", padding:"0 12px"}}>
-      {[["phase","Phase"],["group","Group Results"],["b3","Best 3rd"],["knockout","KO Results"],["standings","Standings"],["players","Players"]].map(([t,l])=>{
+      {[["settings","Settings"],["group","Group Results"],["b3","Best 3rd"],["knockout","KO Results"],["bonus","Bonus Results"],["standings","Standings"],["players","Players"]].map(([t,l])=>{
         const on = adminTab===t;
         return <button key={t} onClick={()=>setAdminTab(t)} style={{padding:"12px 14px", border:"none", background:"transparent", cursor:"pointer", position:"relative", fontFamily:FF.sans, fontSize:12, fontWeight:on?700:500, color:on?CT.ink:CT.muted, whiteSpace:"nowrap"}}>
           {l}{on && <div style={{position:"absolute", left:0, right:0, bottom:-1.5, height:3, background:CT.red}}/>}
@@ -979,50 +1099,36 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, settings, allUsers, lead
 
     <div style={{padding:"22px"}}>
 
-      {adminTab==="phase" && <>
+      {adminTab==="settings" && <>
         <div style={{background:CT.ink, color:"#fff", padding:"12px 14px", marginBottom:14}}>
-          <Kicker color="#9c9789">Control which phase is currently open. Deadlines auto-lock picks; toggles override.</Kicker>
+          <Kicker color="#9c9789">Picks lock per-match at each kickoff. Bonus picks lock at the first kickoff.</Kicker>
         </div>
 
         <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"16px", marginBottom:12}}>
-          <Kicker color={CT.red}>PHASE I</Kicker>
-          <div style={{fontFamily:FF.display, fontWeight:800, fontSize:20, marginTop:2}}>Group stage</div>
-          <div style={{marginTop:14, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-            <div>
-              <div style={{fontSize:13, fontWeight:600}}>Group picks open</div>
-              <Kicker>{localSettings.groupOpen?"PLAYERS CAN SUBMIT":"CLOSED"}</Kicker>
-            </div>
-            <Toggle checked={localSettings.groupOpen} onChange={v=>setLocalSettings(s=>({...s,groupOpen:v}))}/>
+          <Kicker color={CT.red}>GROUP STAGE</Kicker>
+          <div style={{fontFamily:FF.display, fontWeight:800, fontSize:20, marginTop:2}}>Per-match locking</div>
+          <div style={{marginTop:10, fontSize:13, color:CT.muted, lineHeight:1.5}}>
+            Each of the 72 group matches locks automatically at its own kickoff. There is no single deadline.
           </div>
-          <div style={{marginTop:14}}>
-            <Kicker>DEADLINE (UTC)</Kicker>
-            <input type="datetime-local" style={{...inputLight, marginTop:6}}
-              value={localSettings.groupDeadline?localSettings.groupDeadline.slice(0,16):""}
-              onChange={e=>setLocalSettings(s=>({...s,groupDeadline:e.target.value+":00Z"}))}/>
-            <div style={{marginTop:6}}><Kicker>MYT: <span style={{color:CT.ink}}>{fmtMYT(localSettings.groupDeadline)}</span></Kicker></div>
-          </div>
+          <div style={{marginTop:10}}><Kicker>FIRST KICKOFF · <span style={{color:CT.ink}}>{fmtMYT(FIRST_KICKOFF.toISOString())}</span></Kicker></div>
         </div>
 
         <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"16px", marginBottom:12}}>
-          <Kicker color={CT.blue}>PHASE II</Kicker>
-          <div style={{fontFamily:FF.display, fontWeight:800, fontSize:20, marginTop:2}}>Bracket</div>
-          <div style={{marginTop:8, padding:"8px 10px", background:CT.yellow, color:CT.ink}}>
-            <Kicker color={CT.ink}>OPEN ONLY AFTER ALL 72 GROUP RESULTS + 8 BEST-3RD SLOTS</Kicker>
+          <Kicker color={CT.blue}>BRACKET</Kicker>
+          <div style={{fontFamily:FF.display, fontWeight:800, fontSize:20, marginTop:2}}>Per-match locking</div>
+          <div style={{marginTop:10, fontSize:13, color:CT.muted, lineHeight:1.5}}>
+            Every knockout match locks at its own kickoff. The final (M104) stays editable until its kickoff.
           </div>
-          <div style={{marginTop:14, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-            <div>
-              <div style={{fontSize:13, fontWeight:600}}>Bracket picks open</div>
-              <Kicker>{localSettings.bracketOpen?"PLAYERS CAN SUBMIT":"NOT YET OPEN"}</Kicker>
-            </div>
-            <Toggle checked={localSettings.bracketOpen} onChange={v=>setLocalSettings(s=>({...s,bracketOpen:v}))}/>
-          </div>
-          <div style={{marginTop:14}}>
-            <Kicker>DEADLINE (UTC)</Kicker>
-            <input type="datetime-local" style={{...inputLight, marginTop:6}}
-              value={localSettings.bracketDeadline?localSettings.bracketDeadline.slice(0,16):""}
-              onChange={e=>setLocalSettings(s=>({...s,bracketDeadline:e.target.value+":00Z"}))}/>
-            <div style={{marginTop:6, marginBottom:14}}><Kicker>MYT: <span style={{color:CT.ink}}>{fmtMYT(localSettings.bracketDeadline)}</span></Kicker></div>
+          <div style={{marginTop:12}}>
             <Btn color={CT.red} sm onClick={()=>{if(window.confirm("Reset ALL bracket picks for all players? Cannot be undone."))resetBracketPicks();}}>Reset all bracket picks</Btn>
+          </div>
+        </div>
+
+        <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"16px", marginBottom:12}}>
+          <Kicker color={CT.yellow}>BONUS PICKS</Kicker>
+          <div style={{fontFamily:FF.display, fontWeight:800, fontSize:20, marginTop:2}}>Champion · Runner-up</div>
+          <div style={{marginTop:10, fontSize:13, color:CT.muted, lineHeight:1.5}}>
+            Pre-tournament picks. Lock automatically at the first kickoff. Enter the actual results in the Bonus Results tab once the tournament concludes.
           </div>
         </div>
 
@@ -1037,7 +1143,7 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, settings, allUsers, lead
           </div>
         </div>
 
-        <Btn color={CT.ink} full onClick={handleSaveSettings}>Save all settings</Btn>
+        <Btn color={CT.ink} full onClick={handleSaveSettings}>Save settings</Btn>
 
         <div style={{background:"#fff", border:`1.5px solid ${CT.rule2}`, padding:"14px", marginTop:14}}>
           <Kicker>ADMIN PASSWORD</Kicker>
@@ -1140,6 +1246,28 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, settings, allUsers, lead
         })}
       </>}
 
+      {adminTab==="bonus" && <>
+        <div style={{background:CT.yellow, color:CT.ink, padding:"10px 14px", marginBottom:14}}>
+          <Kicker color={CT.ink}>● ENTER ACTUAL CHAMPION AND RUNNER-UP AT TOURNAMENT END</Kicker>
+        </div>
+        <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"16px", marginBottom:12}}>
+          <Kicker color={CT.yellow}>+40 PTS</Kicker>
+          <div style={{fontFamily:FF.display, fontWeight:800, fontSize:18, marginTop:2, marginBottom:10}}>Champion</div>
+          <select value={resultBonus.champion||""} onChange={e=>saveBonus("champion", e.target.value)} style={inputLight}>
+            <option value="">— not set —</option>
+            {ALL_TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"16px", marginBottom:12}}>
+          <Kicker color={CT.yellow}>+20 PTS</Kicker>
+          <div style={{fontFamily:FF.display, fontWeight:800, fontSize:18, marginTop:2, marginBottom:10}}>Runner-up</div>
+          <select value={resultBonus.runnerUp||""} onChange={e=>saveBonus("runnerUp", e.target.value)} style={inputLight}>
+            <option value="">— not set —</option>
+            {ALL_TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+      </>}
+
       {adminTab==="standings" && <>
         <div style={{background:CT.green, color:"#fff", padding:"10px 14px", marginBottom:14}}>
           <Kicker color="#fff">● LIVE STANDINGS FROM ACTUAL GROUP RESULTS</Kicker>
@@ -1171,13 +1299,158 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, settings, allUsers, lead
               <div style={{width:30, height:30, background:CT.ink, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:FF.display, fontWeight:800, fontSize:13}}>{u.name[0].toUpperCase()}</div>
               <div>
                 <div style={{fontFamily:FF.sans, fontWeight:700, fontSize:13}}>{u.name}</div>
-                <Kicker>{u.groupDone}/72 · {u.koDone}/{KO_DEF.length}{u.pct!==null?` · ${u.pct}% ACC`:""}</Kicker>
+                <Kicker>{u.groupDone}/72 · {u.koDone}/{KO_DEF.length} · {u.total} PTS</Kicker>
               </div>
             </div>
             <Btn color={CT.red} sm onClick={()=>onDeleteUser(u.name)}>Delete</Btn>
           </div>
         ))}
       </>}
+    </div>
+  </>;
+}
+
+// ═══ BONUS PICKS TAB ═════════════════════════════════════════════════════════
+function BonusPicksTab({ champion, runnerUp, onChampion, onRunnerUp, locked, resultBonus }) {
+  const champActual = resultBonus?.champion || "";
+  const ruActual = resultBonus?.runnerUp || "";
+  const champCorrect = champActual && champion && champActual === champion;
+  const ruCorrect = ruActual && runnerUp && ruActual === runnerUp;
+  return <div style={{padding:"22px 22px 36px"}}>
+    <div style={{marginBottom:6}}><Kicker>PRE-TOURNAMENT</Kicker></div>
+    <Display size={28} style={{display:"block"}}>Bonus picks.</Display>
+    <div style={{marginTop:10, marginBottom:18, fontFamily:FF.sans, fontSize:13, color:CT.muted, lineHeight:1.5}}>
+      Choose the team you think will win the cup and the one you think will finish second. Both picks lock at the first kickoff ({fmtMYT(FIRST_KICKOFF.toISOString())}) and stay locked for the rest of the tournament.
+    </div>
+
+    {locked && <div style={{margin:"0 0 14px", padding:"10px 14px", background:CT.ink, color:"#fff"}}>
+      <Kicker color={CT.yellow}>● BONUS PICKS LOCKED</Kicker>
+    </div>}
+
+    <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"16px", marginBottom:12, boxShadow: champion?`4px 4px 0 ${CT.yellow}`:"none"}}>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+        <Kicker color={CT.yellow}>CHAMPION · +{CHAMPION_BONUS_PTS} PTS</Kicker>
+        {champActual && champion && <span style={{fontFamily:FF.mono, fontSize:10, fontWeight:700, letterSpacing:"0.12em", padding:"2px 6px", background:champCorrect?CT.green:CT.red, color:"#fff"}}>{champCorrect?"CORRECT":"MISSED"}</span>}
+      </div>
+      <div style={{fontFamily:FF.display, fontWeight:800, fontSize:22, marginTop:4, marginBottom:12, letterSpacing:"-0.02em"}}>Pick your winner.</div>
+      {locked ? <div style={{display:"flex", alignItems:"center", gap:10, padding:"10px 12px", border:`1.5px solid ${CT.rule2}`, background:CT.paper2}}>
+        {champion ? <><Flag team={champion} size={20}/><span style={{fontFamily:FF.sans, fontWeight:700, fontSize:14}}>{champion}</span></>
+          : <span style={{fontFamily:FF.sans, fontSize:13, color:CT.faint}}>No pick made.</span>}
+      </div> : <select value={champion||""} onChange={e=>onChampion(e.target.value)} style={inputLight}>
+        <option value="">— select a team —</option>
+        {ALL_TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+      </select>}
+      {champActual && <div style={{marginTop:10}}><Kicker>ACTUAL: <span style={{color:CT.ink}}>{champActual}</span></Kicker></div>}
+    </div>
+
+    <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"16px", marginBottom:12, boxShadow: runnerUp?`4px 4px 0 ${CT.blue}`:"none"}}>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+        <Kicker color={CT.blue}>RUNNER-UP · +{RUNNERUP_BONUS_PTS} PTS</Kicker>
+        {ruActual && runnerUp && <span style={{fontFamily:FF.mono, fontSize:10, fontWeight:700, letterSpacing:"0.12em", padding:"2px 6px", background:ruCorrect?CT.green:CT.red, color:"#fff"}}>{ruCorrect?"CORRECT":"MISSED"}</span>}
+      </div>
+      <div style={{fontFamily:FF.display, fontWeight:800, fontSize:22, marginTop:4, marginBottom:12, letterSpacing:"-0.02em"}}>Pick your runner-up.</div>
+      {locked ? <div style={{display:"flex", alignItems:"center", gap:10, padding:"10px 12px", border:`1.5px solid ${CT.rule2}`, background:CT.paper2}}>
+        {runnerUp ? <><Flag team={runnerUp} size={20}/><span style={{fontFamily:FF.sans, fontWeight:700, fontSize:14}}>{runnerUp}</span></>
+          : <span style={{fontFamily:FF.sans, fontSize:13, color:CT.faint}}>No pick made.</span>}
+      </div> : <select value={runnerUp||""} onChange={e=>onRunnerUp(e.target.value)} style={inputLight}>
+        <option value="">— select a team —</option>
+        {ALL_TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+      </select>}
+      {ruActual && <div style={{marginTop:10}}><Kicker>ACTUAL: <span style={{color:CT.ink}}>{ruActual}</span></Kicker></div>}
+    </div>
+
+    <div style={{marginTop:14, padding:"10px 14px", background:CT.paper2, border:`1.5px solid ${CT.rule2}`}}>
+      <Kicker>NOTE</Kicker>
+      <div style={{marginTop:4, fontSize:12, color:CT.muted, lineHeight:1.5}}>
+        These bonus picks are separate from the bracket Final (M104). You can pick the same team for both — or different teams — and you can pick a champion who doesn't actually reach the final in your bracket.
+      </div>
+    </div>
+  </div>;
+}
+
+// ═══ HOW TO PLAY SCREEN ══════════════════════════════════════════════════════
+function HowToPlayScreen({ onBack }) {
+  return <>
+    <div style={{background:CT.ink, color:"#fff", padding:"14px 22px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+      <button onClick={onBack} style={{background:"transparent", border:`1.5px solid #555`, color:"#fff", fontFamily:FF.sans, fontSize:11, fontWeight:600, padding:"5px 10px", cursor:"pointer", letterSpacing:"0.04em", textTransform:"uppercase"}}>← Back</button>
+      <Wordmark inverse/>
+    </div>
+    <div style={{display:"flex", height:6}}>
+      <div style={{flex:1, background:CT.red}}/><div style={{flex:1, background:CT.blue}}/>
+      <div style={{flex:1, background:CT.green}}/><div style={{flex:1, background:CT.yellow}}/>
+    </div>
+
+    <div style={{padding:"32px 22px 12px"}}>
+      <Kicker color={CT.red}>● HOW TO PLAY</Kicker>
+      <Display size={44} style={{display:"block", marginTop:6}}>The rules.</Display>
+      <div style={{marginTop:14, maxWidth:520, fontFamily:FF.sans, fontSize:14, lineHeight:1.6, color:CT.ink2}}>
+        Predict every match across the three stages of the tournament, plus two pre-tournament bonus picks. Every correct call earns credits. Highest credits total wins.
+      </div>
+    </div>
+
+    <div style={{padding:"18px 22px 0"}}>
+      <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"18px", marginBottom:12}}>
+        <Kicker color={CT.red}>STAGE 1 · GROUP STAGE</Kicker>
+        <div style={{marginTop:6, fontFamily:FF.display, fontWeight:800, fontSize:22, letterSpacing:"-0.02em"}}>72 matches · home / draw / away</div>
+        <div style={{marginTop:10, display:"grid", gridTemplateColumns:"auto 1fr", gap:"8px 14px", alignItems:"baseline"}}>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.red}}>{GROUP_WIN_PTS} pts</Num>
+          <div style={{fontSize:13, color:CT.ink}}>per correct home / away pick</div>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.red}}>+{DRAW_BONUS_PTS} pts</Num>
+          <div style={{fontSize:13, color:CT.ink}}>bonus when you correctly call a draw (on top of the {GROUP_WIN_PTS} pts)</div>
+        </div>
+      </div>
+
+      <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"18px", marginBottom:12}}>
+        <Kicker color={CT.blue}>STAGE 2 · KNOCKOUT BRACKET</Kicker>
+        <div style={{marginTop:6, fontFamily:FF.display, fontWeight:800, fontSize:22, letterSpacing:"-0.02em"}}>32 matches · pick the winner</div>
+        <div style={{marginTop:10, display:"grid", gridTemplateColumns:"auto 1fr", gap:"8px 14px", alignItems:"baseline"}}>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.blue}}>{STAGE_POINTS.R32} pts</Num><div style={{fontSize:13}}>Round of 32</div>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.blue}}>{STAGE_POINTS.R16} pts</Num><div style={{fontSize:13}}>Round of 16</div>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.blue}}>{STAGE_POINTS.QF} pts</Num><div style={{fontSize:13}}>Quarterfinal</div>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.blue}}>{STAGE_POINTS.SF} pts</Num><div style={{fontSize:13}}>Semifinal</div>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.blue}}>{STAGE_POINTS["3P"]} pts</Num><div style={{fontSize:13}}>Third Place playoff</div>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.blue}}>{STAGE_POINTS.F} pts</Num><div style={{fontSize:13}}>Final</div>
+        </div>
+      </div>
+
+      <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"18px", marginBottom:12}}>
+        <Kicker color={CT.yellow}>STAGE 3 · BONUS PICKS</Kicker>
+        <div style={{marginTop:6, fontFamily:FF.display, fontWeight:800, fontSize:22, letterSpacing:"-0.02em"}}>2 picks · champion + runner-up</div>
+        <div style={{marginTop:10, display:"grid", gridTemplateColumns:"auto 1fr", gap:"8px 14px", alignItems:"baseline"}}>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.yellow}}>+{CHAMPION_BONUS_PTS} pts</Num>
+          <div style={{fontSize:13}}>correct Champion pick</div>
+          <Num style={{fontSize:13, fontWeight:700, color:CT.yellow}}>+{RUNNERUP_BONUS_PTS} pts</Num>
+          <div style={{fontSize:13}}>correct Runner-up pick</div>
+        </div>
+        <div style={{marginTop:12, fontSize:13, color:CT.muted, lineHeight:1.5}}>
+          Both bonus picks must be entered before the first kickoff ({fmtMYT(FIRST_KICKOFF.toISOString())}). After that they lock for good — independent of any bracket match. They are separate from the Final (M104) pick in your bracket.
+        </div>
+      </div>
+
+      <div style={{background:CT.ink, color:"#fff", padding:"18px", marginBottom:12}}>
+        <Kicker color={CT.yellow}>PER-MATCH LOCKING</Kicker>
+        <div style={{marginTop:6, fontFamily:FF.display, fontWeight:800, fontSize:22, color:"#fff", letterSpacing:"-0.02em"}}>Edit until kickoff.</div>
+        <div style={{marginTop:10, fontFamily:FF.sans, fontSize:13, lineHeight:1.6, color:"#dcd6c5"}}>
+          Every match has its own lock. As long as a match has not kicked off, you can change your pick for it — group stage or bracket. Once kickoff passes, that single match's pick is locked, while everything else stays editable. The Bracket Final (M104) remains editable right up to its own kickoff.
+        </div>
+      </div>
+
+      <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"18px", marginBottom:12}}>
+        <Kicker color={CT.green}>TIEBREAKERS</Kicker>
+        <div style={{marginTop:6, fontFamily:FF.display, fontWeight:800, fontSize:22, letterSpacing:"-0.02em"}}>If totals tie…</div>
+        <ol style={{margin:"10px 0 0", paddingLeft:20, fontSize:13, lineHeight:1.7, color:CT.ink}}>
+          <li>Highest knockout score wins.</li>
+          <li>Then: correct Champion pick wins.</li>
+          <li>Then: correct Runner-up pick wins.</li>
+        </ol>
+      </div>
+
+      <div style={{background:CT.paper2, padding:"14px", marginBottom:36, border:`1.5px solid ${CT.rule2}`}}>
+        <Kicker>SCORING IS IN CREDITS / POINTS</Kicker>
+        <div style={{marginTop:4, fontSize:12, color:CT.muted, lineHeight:1.5}}>
+          This is a friendly prediction game. No money changes hands — everything is scored in credits/points only.
+        </div>
+      </div>
     </div>
   </>;
 }
