@@ -244,7 +244,7 @@ const USERS_KEY = "wc2026_users_v6";
 const RESULTS_KEY = "wc2026_results_v6";
 const SETTINGS_KEY = "wc2026_settings_v6";
 const ADMIN_PW = "Bullgy@2026";
-const DEFAULT_SETTINGS = { registrationLocked:false, bonusOpen:true };
+const DEFAULT_SETTINGS = { registrationLocked:false, bonusOpen:true, groupOpen:true, bracketOpen:true };
 
 function calcPoints(userData, rGroup, rKO, rBonus) {
   const gPreds = userData.groupPreds || {};
@@ -453,9 +453,9 @@ export default function App() {
   async function handleSave() {
     const existing = allUsers[username] || {};
     const safeGroup = {...(existing.groupPreds||{})};
-    GROUP_MATCHES.forEach(m => { if (!isLocked(m.kickoff, now)) { if (groupPreds[m.id]) safeGroup[m.id] = groupPreds[m.id]; else delete safeGroup[m.id]; } });
+    GROUP_MATCHES.forEach(m => { if (settings.groupOpen !== false && !isLocked(m.kickoff, now)) { if (groupPreds[m.id]) safeGroup[m.id] = groupPreds[m.id]; else delete safeGroup[m.id]; } });
     const safeKO = {...(existing.userKOW||{})};
-    KO_DEF.forEach(m => { if (!isLocked(KO_KICKOFFS[m.id], now)) { const k=`w_${m.id}`; if (userKOW[k]) safeKO[k]=userKOW[k]; else delete safeKO[k]; } });
+    KO_DEF.forEach(m => { if (settings.bracketOpen !== false && !isLocked(KO_KICKOFFS[m.id], now)) { const k=`w_${m.id}`; if (userKOW[k]) safeKO[k]=userKOW[k]; else delete safeKO[k]; } });
     const safeChamp = bonusLocked ? (existing.bonusChampion||"") : bonusChampion;
     const safeRU = bonusLocked ? (existing.bonusRunnerUp||"") : bonusRunnerUp;
     const upd = {...allUsers, [username]: { ...existing, groupPreds:safeGroup, userKOW:safeKO, bonusChampion:safeChamp, bonusRunnerUp:safeRU, savedAt: new Date().toISOString() }};
@@ -467,11 +467,11 @@ export default function App() {
     const upd={...allUsers}; delete upd[name]; await saveUsers(upd); setConfirmDelete(null); showToast(`${name}'s entry deleted`);
   }
   const setGroupPick = (id,val) => {
-    const m = GROUP_MATCHES.find(x => x.id === id); if (!m || isLocked(m.kickoff, now)) return;
+    const m = GROUP_MATCHES.find(x => x.id === id); if (!m || settings.groupOpen === false || isLocked(m.kickoff, now)) return;
     setGroupPreds(p => ({...p, [id]:val}));
   };
   const setKOPick = (id,team) => {
-    if (isLocked(KO_KICKOFFS[id], now)) return;
+    if (settings.bracketOpen === false || isLocked(KO_KICKOFFS[id], now)) return;
     setUserKOW(p => ({...p, [`w_${id}`]: team}));
   };
   const setChampionPick = team => { if (!bonusLocked) setBonusChampion(team); };
@@ -481,14 +481,14 @@ export default function App() {
     const rand = arr => arr[Math.floor(Math.random()*arr.length)];
     if (subTab === "group") {
       const np = {...groupPreds};
-      GROUP_MATCHES.forEach(m => { if (!np[m.id] && !isLocked(m.kickoff, now)) np[m.id] = rand(["home","draw","away"]); });
+      GROUP_MATCHES.forEach(m => { if (settings.groupOpen !== false && !np[m.id] && !isLocked(m.kickoff, now)) np[m.id] = rand(["home","draw","away"]); });
       setGroupPreds(np); showToast("Open group picks auto-filled — review and save.");
     } else if (subTab === "bracket") {
       const nk = {...userKOW};
       ["R32","R16","QF","SF","3P","F"].forEach(stage => {
         KO_DEF.filter(m => m.stage === stage).forEach(m => {
           const k = `w_${m.id}`;
-          if (!nk[k] && !isLocked(KO_KICKOFFS[m.id], now)) {
+          if (settings.bracketOpen !== false && !nk[k] && !isLocked(KO_KICKOFFS[m.id], now)) {
             const h = resolveTeam(m.homeSlot, realStandings, resultB3, nk);
             const a = resolveTeam(m.awaySlot, realStandings, resultB3, nk);
             const opts = [h, a].filter(Boolean);
@@ -608,9 +608,9 @@ export default function App() {
         })}
       </div>
 
-      {subTab==="group" && <GroupStageTab groupPreds={groupPreds} onPick={setGroupPick} now={now} resultGroup={resultGroup}/>}
+      {subTab==="group" && <GroupStageTab groupPreds={groupPreds} onPick={setGroupPick} now={now} resultGroup={resultGroup} groupOpen={settings.groupOpen !== false}/>}
       {subTab==="standings" && <StandingsTab standings={userStandings} groupPreds={groupPreds}/>}
-      {subTab==="bracket" && <BracketTab koMatches={realKOMatches} userKOW={userKOW} setKOPick={setKOPick} now={now} resultKOW={resultKOW}/>}
+      {subTab==="bracket" && <BracketTab koMatches={realKOMatches} userKOW={userKOW} setKOPick={setKOPick} now={now} resultKOW={resultKOW} bracketOpen={settings.bracketOpen !== false}/>}
       {subTab==="bonus" && <BonusPicksTab champion={bonusChampion} runnerUp={bonusRunnerUp} onChampion={setChampionPick} onRunnerUp={setRunnerUpPick} locked={bonusLocked} resultBonus={resultBonus}/>}
     </>}
 
@@ -772,7 +772,7 @@ function PhaseBlock({ label, title, deadline, state, color }) {
 }
 
 // ═══ GROUP STAGE TAB ═════════════════════════════════════════════════════════
-function GroupStageTab({ groupPreds, onPick, now, resultGroup }) {
+function GroupStageTab({ groupPreds, onPick, now, resultGroup, groupOpen }) {
   const [activeGrp, setActiveGrp] = useState("A");
   const matches = GROUP_MATCHES.filter(m=>m.grp===activeGrp);
   const color = GROUP_COLORS[activeGrp];
@@ -825,7 +825,7 @@ function GroupStageTab({ groupPreds, onPick, now, resultGroup }) {
             <div style={{flex:1, height:1, background:CT.rule2}}/>
             <Kicker>{day.items[0].rawDate}</Kicker>
           </div>
-          {day.items.map(m=><GroupCard key={m.id} match={m} pick={groupPreds[m.id]} result={resultGroup[m.id]} onPick={v=>onPick(m.id,v)} isOpen={!isLocked(m.kickoff, now)} color={color}/>)}
+          {day.items.map(m=><GroupCard key={m.id} match={m} pick={groupPreds[m.id]} result={resultGroup[m.id]} onPick={v=>onPick(m.id,v)} isOpen={groupOpen && !isLocked(m.kickoff, now)} color={color}/>)}
         </div>
       ))}
     </div>
@@ -893,7 +893,7 @@ function StandingsCard({ group, table, color }) {
 }
 
 // ═══ BRACKET TAB ═════════════════════════════════════════════════════════════
-function BracketTab({ koMatches, userKOW, setKOPick, now, resultKOW }) {
+function BracketTab({ koMatches, userKOW, setKOPick, now, resultKOW, bracketOpen }) {
   const [stage, setStage] = useState("R32");
   const stages = ["R32","R16","QF","SF","3P","F"];
   const stageColor = STAGE_COLORS[stage];
@@ -907,7 +907,7 @@ function BracketTab({ koMatches, userKOW, setKOPick, now, resultKOW }) {
       </div>
     </div>
     <div style={{margin:"18px 22px 24px", background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"12px 8px"}}>
-      <BracketVisual koMatches={koMatches} userKOW={userKOW} setKOPick={setKOPick} now={now} resultKOW={resultKOW}/>
+      <BracketVisual koMatches={koMatches} userKOW={userKOW} setKOPick={setKOPick} now={now} resultKOW={resultKOW} bracketOpen={bracketOpen}/>
     </div>
     <div style={{padding:"0 22px"}}>
       <div style={{display:"flex", gap:4, overflowX:"auto", paddingBottom:4}}>
@@ -926,7 +926,7 @@ function BracketTab({ koMatches, userKOW, setKOPick, now, resultKOW }) {
         <Serif size={22} color={stageColor}>{STAGE_LABEL[stage]}</Serif>
         <div style={{flex:1, height:2, background:stageColor}}/>
       </div>
-      {koMatches.filter(m=>m.stage===stage).map(m=><KOCard key={m.id} match={m} pick={userKOW[`w_${m.id}`]} result={resultKOW[`w_${m.id}`]} onPick={t=>setKOPick(m.id,t)} isOpen={!isLocked(KO_KICKOFFS[m.id], now)} color={stageColor}/>)}
+      {koMatches.filter(m=>m.stage===stage).map(m=><KOCard key={m.id} match={m} pick={userKOW[`w_${m.id}`]} result={resultKOW[`w_${m.id}`]} onPick={t=>setKOPick(m.id,t)} isOpen={bracketOpen && !isLocked(KO_KICKOFFS[m.id], now)} color={stageColor}/>)}
     </div>
   </div>;
 }
@@ -957,7 +957,7 @@ function KOCard({ match, pick, result, onPick, isOpen, color }) {
   </div>;
 }
 
-function BracketVisual({ koMatches, userKOW, setKOPick, now, resultKOW }) {
+function BracketVisual({ koMatches, userKOW, setKOPick, now, resultKOW, bracketOpen }) {
   const STAGE_ORDER = ["R32","R16","QF","SF","F"];
   const byStage = {};
   koMatches.filter(m=>m.stage!=="3P").forEach(m=>{ if(!byStage[m.stage]) byStage[m.stage]=[]; byStage[m.stage].push(m); });
@@ -974,7 +974,7 @@ function BracketVisual({ koMatches, userKOW, setKOPick, now, resultKOW }) {
           <div style={{height:TOTAL, display:"flex", flexDirection:"column"}}>
             {(byStage[s]||[]).map(m=>{
               const winner = userKOW[`w_${m.id}`], actualW = resultKOW[`w_${m.id}`];
-              const matchOpen = !isLocked(KO_KICKOFFS[m.id], now);
+              const matchOpen = bracketOpen && !isLocked(KO_KICKOFFS[m.id], now);
               return <div key={m.id} style={{height:MH[s], display:"flex", alignItems:"center", flexShrink:0}}>
                 <div style={{width:"100%", border:`1px solid ${CT.rule2}`}}>
                   {[m.home, m.away].map((team,ti)=>{
@@ -1340,6 +1340,13 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, a
             Each of the 72 group matches locks automatically at its own kickoff. There is no single deadline.
           </div>
           <div style={{marginTop:10}}><Kicker>FIRST KICKOFF · <span style={{color:CT.ink}}>{fmtMYT(FIRST_KICKOFF.toISOString())}</span></Kicker></div>
+          <div style={{marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:13, fontWeight:600}}>Group stage picks</div>
+              <Kicker>{localSettings.groupOpen===false?"CLOSED":"OPEN"}</Kicker>
+            </div>
+            <Toggle checked={localSettings.groupOpen!==false} onChange={v=>setLocalSettings(s=>({...s,groupOpen:v}))}/>
+          </div>
         </div>
 
         <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"16px", marginBottom:12}}>
@@ -1347,6 +1354,13 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, a
           <div style={{fontFamily:FF.display, fontWeight:800, fontSize:20, marginTop:2}}>Per-match locking</div>
           <div style={{marginTop:10, fontSize:13, color:CT.muted, lineHeight:1.5}}>
             Every knockout match locks at its own kickoff. The final (M104) stays editable until its kickoff.
+          </div>
+          <div style={{marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:13, fontWeight:600}}>Bracket picks</div>
+              <Kicker>{localSettings.bracketOpen===false?"CLOSED":"OPEN"}</Kicker>
+            </div>
+            <Toggle checked={localSettings.bracketOpen!==false} onChange={v=>setLocalSettings(s=>({...s,bracketOpen:v}))}/>
           </div>
           <div style={{marginTop:12}}>
             <Btn color={CT.red} sm onClick={()=>{if(window.confirm("Reset ALL bracket picks for all players? Cannot be undone."))resetBracketPicks();}}>Reset all bracket picks</Btn>
