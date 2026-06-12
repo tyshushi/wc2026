@@ -385,16 +385,16 @@ export default function App() {
   useEffect(() => { (async () => {
     try { const u = await storageGet(USERS_KEY); if (u?.value) setAllUsers(JSON.parse(u.value)); } catch {}
     try { const r = await storageGet(RESULTS_KEY); if (r?.value) { const d=JSON.parse(r.value); setResultGroup(d.group||{}); setResultB3(d.b3||{}); setResultKOW(d.ko||{}); setResultBonus(d.bonus||{champion:"",runnerUp:""}); } } catch {}
-    try { const s = await storageGet(SETTINGS_KEY); if (s?.value) setSettings({...DEFAULT_SETTINGS,...JSON.parse(s.value)}); } catch {}
+    try { const s = await storageGet(SETTINGS_KEY); if (s?.value) { const merged = {...DEFAULT_SETTINGS, ...JSON.parse(s.value)}; console.log("[settings] loaded from Supabase:", merged); setSettings(merged); } } catch {}
     setLoading(false);
   })(); }, []);
 
   const showToast = msg => { setToast(msg); setTimeout(()=>setToast(""), 2800); };
   const saveUsers = async u => { await storageSet(USERS_KEY, JSON.stringify(u)); setAllUsers(u); };
   const saveResults = async (grp,b3,ko,bonus) => { const b = bonus||resultBonus; await storageSet(RESULTS_KEY, JSON.stringify({group:grp,b3,ko,bonus:b})); setResultGroup(grp); setResultB3(b3); setResultKOW(ko); setResultBonus(b); };
-  const saveSettings = async s => { await storageSet(SETTINGS_KEY, JSON.stringify(s)); setSettings(s); };
+  const saveSettings = async s => { console.log("[settings] saving to Supabase:", s); await storageSet(SETTINGS_KEY, JSON.stringify(s)); setSettings(s); };
 
-  const bonusLocked = settings.bonusOpen === false || now >= FIRST_KICKOFF;
+  const bonusLocked = settings.bonusOpen === false;
   const realStandings = computeStandings(resultGroup);
   const realKOMatches = buildKO(realStandings, resultB3, userKOW);
   const userStandings = computeStandings(groupPreds);
