@@ -244,7 +244,7 @@ const USERS_KEY = "wc2026_users_v6";
 const RESULTS_KEY = "wc2026_results_v6";
 const SETTINGS_KEY = "wc2026_settings_v6";
 const ADMIN_PW = "Bullgy@2026";
-const DEFAULT_SETTINGS = { registrationLocked:false };
+const DEFAULT_SETTINGS = { registrationLocked:false, bonusOpen:true };
 
 function calcPoints(userData, rGroup, rKO, rBonus) {
   const gPreds = userData.groupPreds || {};
@@ -394,7 +394,7 @@ export default function App() {
   const saveResults = async (grp,b3,ko,bonus) => { const b = bonus||resultBonus; await storageSet(RESULTS_KEY, JSON.stringify({group:grp,b3,ko,bonus:b})); setResultGroup(grp); setResultB3(b3); setResultKOW(ko); setResultBonus(b); };
   const saveSettings = async s => { await storageSet(SETTINGS_KEY, JSON.stringify(s)); setSettings(s); };
 
-  const bonusLocked = now >= FIRST_KICKOFF;
+  const bonusLocked = settings.bonusOpen === false || now >= FIRST_KICKOFF;
   const realStandings = computeStandings(resultGroup);
   const realKOMatches = buildKO(realStandings, resultB3, userKOW);
   const userStandings = computeStandings(groupPreds);
@@ -1358,6 +1358,13 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, a
           <div style={{fontFamily:FF.display, fontWeight:800, fontSize:20, marginTop:2}}>Champion · Runner-up</div>
           <div style={{marginTop:10, fontSize:13, color:CT.muted, lineHeight:1.5}}>
             Pre-tournament picks. Lock automatically at the first kickoff. Enter the actual results in the Bonus Results tab once the tournament concludes.
+          </div>
+          <div style={{marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:13, fontWeight:600}}>Bonus picks</div>
+              <Kicker>{localSettings.bonusOpen===false?"CLOSED":"OPEN"}</Kicker>
+            </div>
+            <Toggle checked={localSettings.bonusOpen!==false} onChange={v=>setLocalSettings(s=>({...s,bonusOpen:v}))}/>
           </div>
         </div>
 
