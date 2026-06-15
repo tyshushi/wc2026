@@ -536,9 +536,11 @@ export default function App() {
       onNameSubmit={handleNameSubmit} onPinSubmit={handlePinSubmit} onSetPin={handleSetPin}
       onBack={()=>{setAuthStep("name");setAuthError("");setPinInput("");setPinConfirm("");}}
       now={now} count={Object.keys(allUsers).length}
-      resultsIn={Object.keys(resultGroup).length} onLB={()=>setView("leaderboard")} onHTP={()=>setView("howtoplay")}/>}
+      resultsIn={Object.keys(resultGroup).length} onLB={()=>setView("leaderboard")} onHTP={()=>setView("howtoplay")} onMP={()=>setView("matchPicks")}/>}
 
     {view==="howtoplay" && <HowToPlayScreen onBack={()=>setView(username?"predict":"home")}/>}
+
+    {view==="matchPicks" && <MatchPicksScreen allUsers={allUsers} leaderboard={leaderboard} resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} onBack={()=>setView("home")}/>}
 
     {view==="adminLogin" && <div style={{padding:"48px 22px"}}>
       <div style={{background:CT.ink, color:"#fff", padding:"24px 22px"}}>
@@ -618,7 +620,7 @@ export default function App() {
 }
 
 // ═══ HOME / AUTH SCREEN ══════════════════════════════════════════════════════
-function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP }) {
+function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP, onMP }) {
   const firstKickoffMYT = fmtMYT(FIRST_KICKOFF.toISOString());
   const finalMatch = KO_DEF.find(m => m.stage === "F");
   const finalKickoff = finalMatch ? getKickoffUTC(finalMatch.date, finalMatch.et) : null;
@@ -730,6 +732,9 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
     <div style={{padding:"0 22px 24px", display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
       <button onClick={onHTP} style={{...inputLight, padding:"12px 16px", cursor:"pointer", textAlign:"left", fontWeight:700, textTransform:"uppercase", fontSize:11, letterSpacing:"0.04em", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
         <span>How to Play</span><span>→</span>
+      </button>
+      <button onClick={onMP} style={{...inputLight, padding:"12px 16px", cursor:"pointer", textAlign:"left", fontWeight:700, textTransform:"uppercase", fontSize:11, letterSpacing:"0.04em", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+        <span>Match Picks</span><span>→</span>
       </button>
       <button onClick={onLB} style={{...inputLight, padding:"12px 16px", cursor:"pointer", textAlign:"left", fontWeight:700, textTransform:"uppercase", fontSize:11, letterSpacing:"0.04em", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
         <span>Leaderboard</span><span>→</span>
@@ -1277,6 +1282,162 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
         </div>;
       })}
     </div>
+  </>;
+}
+
+// ═══ MATCH PICKS SCREEN ══════════════════════════════════════════════════════
+function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, resultKOW, onBack }) {
+  const [section, setSection] = useState("group");
+  const [activeGrp, setActiveGrp] = useState("A");
+  const [activeStage, setActiveStage] = useState("R32");
+
+  const players = leaderboard.map(p => p.name);
+  const realStandings = computeStandings(resultGroup);
+  const koMatches = buildKO(realStandings, resultB3, resultKOW);
+  const stages = ["R32","R16","QF","SF","3P","F"];
+
+  const grpMatches = GROUP_MATCHES.filter(m => m.grp === activeGrp);
+  const stageMatches = koMatches.filter(m => m.stage === activeStage);
+
+  const PlayerRows = ({ hasResult, getPick }) => (
+    <div style={{marginTop:12, paddingTop:10, borderTop:`1px solid ${CT.rule}`}}>
+      <div style={{display:"grid", gridTemplateColumns: hasResult ? "1fr auto 52px" : "1fr auto", gap:10, alignItems:"center", marginBottom:2}}>
+        <Kicker>PLAYER</Kicker>
+        <Kicker>PICK</Kicker>
+        {hasResult && <Kicker style={{textAlign:"right"}}>PTS</Kicker>}
+      </div>
+      {players.length === 0
+        ? <div style={{padding:"10px 0", fontFamily:FF.sans, fontSize:13, color:CT.faint}}>No players yet.</div>
+        : players.map(name => {
+            const { label, made, earned, ok } = getPick(name);
+            return <div key={name} style={{display:"grid", gridTemplateColumns: hasResult ? "1fr auto 52px" : "1fr auto", gap:10, alignItems:"center", padding:"8px 0", borderTop:`1px solid ${CT.rule}`}}>
+              <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:500, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</span>
+              <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:600, color: made ? (hasResult && ok ? CT.green : CT.ink) : CT.faint}}>{made ? label : "—"}</span>
+              {hasResult && <Num style={{fontSize:13, fontWeight:700, textAlign:"right", color: earned>0?CT.green:CT.ink}}>{made ? earned : "—"}</Num>}
+            </div>;
+          })}
+    </div>
+  );
+
+  return <>
+    <div style={{background:CT.ink, color:"#fff", padding:"14px 22px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+      <button onClick={onBack} style={{background:"transparent", border:`1.5px solid #555`, color:"#fff", fontFamily:FF.sans, fontSize:11, fontWeight:600, padding:"5px 10px", cursor:"pointer", letterSpacing:"0.04em", textTransform:"uppercase"}}>← Back</button>
+      <Wordmark inverse/>
+    </div>
+    <div style={{display:"flex", height:6}}>
+      <div style={{flex:1, background:CT.red}}/><div style={{flex:1, background:CT.blue}}/>
+      <div style={{flex:1, background:CT.green}}/><div style={{flex:1, background:CT.yellow}}/>
+    </div>
+
+    <div style={{padding:"22px 22px 0"}}>
+      <Kicker>EVERY PLAYER · READ-ONLY</Kicker>
+      <Display size={32} style={{display:"block", marginTop:4}}>Match picks.</Display>
+      <div style={{marginTop:8, fontFamily:FF.sans, fontSize:13, color:CT.muted, lineHeight:1.5}}>
+        See what everyone picked, match by match. Players are ordered by their current leaderboard total.
+      </div>
+    </div>
+
+    <div style={{display:"flex", background:"#fff", borderBottom:`1.5px solid ${CT.ink}`, padding:"18px 22px 0", marginTop:18, overflowX:"auto"}}>
+      {[{id:"group", label:"Group Stage"},{id:"knockout", label:"Knockout"}].map(it => {
+        const on = section===it.id;
+        return <button key={it.id} onClick={()=>setSection(it.id)} style={{
+          padding:"13px 16px 11px", border:"none", background:"transparent", cursor:"pointer", position:"relative",
+          fontFamily:FF.sans, fontSize:13, fontWeight:on?700:500, color:on?CT.ink:CT.muted, whiteSpace:"nowrap"
+        }}>{it.label}{on && <div style={{position:"absolute", left:0, right:0, bottom:-1.5, height:3, background:CT.red}}/>}</button>;
+      })}
+    </div>
+
+    {section==="group" && <div style={{paddingBottom:36}}>
+      <div style={{padding:"22px 22px 0"}}>
+        <div style={{display:"grid", gridTemplateColumns:"repeat(12, 1fr)", gap:3}}>
+          {GROUPS.map(g => {
+            const on = activeGrp===g, c = GROUP_COLORS[g];
+            return <button key={g} onClick={()=>setActiveGrp(g)} style={{aspectRatio:"1", background:on?c:"#fff", color:on?"#fff":CT.ink, border:`1.5px solid ${on?c:CT.rule2}`, cursor:"pointer", borderRadius:0, fontFamily:FF.display, fontWeight:800, fontSize:14, letterSpacing:"-0.03em", padding:0}}>{g}</button>;
+          })}
+        </div>
+      </div>
+      <div style={{padding:"22px 22px 0"}}>
+        <div style={{display:"flex", alignItems:"baseline", gap:12, marginBottom:14}}>
+          <Serif size={22} color={GROUP_COLORS[activeGrp]}>Group {activeGrp}</Serif>
+          <div style={{flex:1, height:2, background:GROUP_COLORS[activeGrp]}}/>
+        </div>
+        {grpMatches.map(m => {
+          const color = GROUP_COLORS[m.grp];
+          const actual = resultGroup[m.id];
+          const hasResult = !!actual;
+          const actualLabel = actual==="home"?shortName(m.home):actual==="away"?shortName(m.away):actual==="draw"?"Draw":null;
+          return <div key={m.id} style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10}}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+              <div style={{display:"flex", gap:8, alignItems:"center"}}>
+                <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{m.id.toString().padStart(2,"0")}</Num>
+                <Kicker>{m.date} · {m.time} MYT</Kicker>
+              </div>
+              <Kicker>{m.venue}</Kicker>
+            </div>
+            <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10}}>
+              <TeamCell team={m.home}/><Serif size={13} color={CT.faint}>vs</Serif><TeamCell team={m.away} reverse/>
+            </div>
+            {hasResult && <div style={{marginTop:10, paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <Kicker>RESULT</Kicker>
+              <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink}}>{actualLabel}</span>
+            </div>}
+            <PlayerRows hasResult={hasResult} getPick={name => {
+              const pick = allUsers[name]?.groupPreds?.[m.id];
+              const ok = !!(pick && actual && pick===actual);
+              const earned = ok ? (actual==="draw"?GROUP_WIN_PTS+DRAW_BONUS_PTS:GROUP_WIN_PTS) : 0;
+              const label = pick==="home"?shortName(m.home):pick==="away"?shortName(m.away):pick==="draw"?"Draw":"";
+              return { label, made: !!pick, earned, ok };
+            }}/>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {section==="knockout" && <div style={{paddingBottom:36}}>
+      <div style={{padding:"22px 22px 0"}}>
+        <div style={{display:"flex", gap:4, overflowX:"auto", paddingBottom:4}}>
+          {stages.map(s => {
+            const on = activeStage===s, c = STAGE_COLORS[s];
+            return <button key={s} onClick={()=>setActiveStage(s)} style={{padding:"7px 12px", flexShrink:0, background:on?c:"transparent", color:on?"#fff":CT.ink, border:`1.5px solid ${on?c:CT.ink}`, cursor:"pointer", borderRadius:0, fontFamily:FF.sans, fontWeight:700, fontSize:11, letterSpacing:"0.04em", textTransform:"uppercase"}}>{s}</button>;
+          })}
+        </div>
+      </div>
+      <div style={{padding:"22px 22px 0"}}>
+        <div style={{display:"flex", alignItems:"baseline", gap:12, marginBottom:14}}>
+          <Serif size={22} color={STAGE_COLORS[activeStage]}>{STAGE_LABEL[activeStage]}</Serif>
+          <div style={{flex:1, height:2, background:STAGE_COLORS[activeStage]}}/>
+        </div>
+        {stageMatches.map(m => {
+          const color = STAGE_COLORS[m.stage];
+          const actual = resultKOW[`w_${m.id}`];
+          const hasResult = !!actual;
+          return <div key={m.id} style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10}}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+              <div style={{display:"flex", gap:8, alignItems:"center"}}>
+                <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{m.id}</Num>
+                <Kicker>{m.date} · {m.time} MYT</Kicker>
+              </div>
+              <Kicker>{m.venue}</Kicker>
+            </div>
+            {m.home && m.away ? <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10}}>
+              <TeamCell team={m.home}/><Serif size={13} color={CT.faint}>vs</Serif><TeamCell team={m.away} reverse/>
+            </div> : <div style={{padding:"6px 0", textAlign:"center"}}>
+              <Serif size={13} color={CT.faint}>TBD — teams not yet resolved.</Serif>
+            </div>}
+            {hasResult && <div style={{marginTop:10, paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <Kicker>RESULT</Kicker>
+              <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink}}>{shortName(actual)}</span>
+            </div>}
+            <PlayerRows hasResult={hasResult} getPick={name => {
+              const pick = allUsers[name]?.userKOW?.[`w_${m.id}`];
+              const ok = !!(pick && actual && pick===actual);
+              const earned = ok ? (STAGE_POINTS[m.stage] || 0) : 0;
+              return { label: pick ? shortName(pick) : "", made: !!pick, earned, ok };
+            }}/>
+          </div>;
+        })}
+      </div>
+    </div>}
   </>;
 }
 
