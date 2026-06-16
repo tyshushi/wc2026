@@ -400,12 +400,12 @@ export default function App() {
   const userStandings = computeStandings(groupPreds);
 
   const realKOResolved = buildKO(realStandings, resultB3, resultKOW);
-  const upcoming = [...GROUP_MATCHES, ...realKOResolved]
+  const dayAhead = new Date(now.getTime() + 24*60*60*1000);
+  const nextMatches = [...GROUP_MATCHES, ...realKOResolved]
     .map(m => ({ m, k: m.kickoff || KO_KICKOFFS[m.id] }))
-    .filter(x => x.k > now)
-    .sort((a,b) => a.k - b.k);
-  const nextKickoff = upcoming.length ? upcoming[0].k.getTime() : null;
-  const nextMatches = upcoming.filter(x => x.k.getTime() === nextKickoff).map(x => x.m);
+    .filter(x => x.k > now && x.k <= dayAhead)
+    .sort((a,b) => a.k - b.k)
+    .map(x => x.m);
 
   const groupDone = GROUP_MATCHES.filter(m=>groupPreds[m.id]).length;
   const koDone = KO_DEF.filter(m=>userKOW[`w_${m.id}`]).length;
@@ -692,7 +692,7 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
 
     {nextMatches && nextMatches.length > 0 && <div style={{padding:"0 22px 24px"}}>
       <div style={{marginBottom:14, display:"flex", alignItems:"baseline", gap:10}}>
-        <Kicker>UP NEXT</Kicker>
+        <Kicker>NEXT 24 HOURS</Kicker>
         <div style={{flex:1, height:1.5, background:CT.ink}}/>
         <Kicker color={CT.muted}>{nextMatches.length}</Kicker>
       </div>
