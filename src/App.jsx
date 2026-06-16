@@ -378,13 +378,14 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [detailOrigin, setDetailOrigin] = useState("leaderboard");
+  const [mpInitial, setMpInitial] = useState(null);
 
   const openPlayerDetail = (name, origin) => { setSelectedPlayer(name); setDetailOrigin(origin); setView("playerDetail"); };
 
   useEffect(() => { (async () => {
-    try { const u = await storageGet(USERS_KEY); if (u?.value) setAllUsers(JSON.parse(u.value)); } catch {}
-    try { const r = await storageGet(RESULTS_KEY); if (r?.value) { const d=JSON.parse(r.value); setResultGroup(d.group||{}); setResultB3(d.b3||{}); setResultKOW(d.ko||{}); setResultBonus(d.bonus||{champion:"",runnerUp:""}); } } catch {}
-    try { const s = await storageGet(SETTINGS_KEY); if (s?.value) { const merged = {...DEFAULT_SETTINGS, ...JSON.parse(s.value)}; console.log("[settings] loaded from Supabase:", merged); setSettings(merged); } } catch {}
+    try { const u = await storageGet(USERS_KEY); if (u?.value) setAllUsers(JSON.parse(u.value)); } catch { /* storage unavailable — fail silently */ }
+    try { const r = await storageGet(RESULTS_KEY); if (r?.value) { const d=JSON.parse(r.value); setResultGroup(d.group||{}); setResultB3(d.b3||{}); setResultKOW(d.ko||{}); setResultBonus(d.bonus||{champion:"",runnerUp:""}); } } catch { /* storage unavailable — fail silently */ }
+    try { const s = await storageGet(SETTINGS_KEY); if (s?.value) { const merged = {...DEFAULT_SETTINGS, ...JSON.parse(s.value)}; console.log("[settings] loaded from Supabase:", merged); setSettings(merged); } } catch { /* storage unavailable — fail silently */ }
     setLoading(false);
   })(); }, []);
 
@@ -397,6 +398,14 @@ export default function App() {
   const realStandings = computeStandings(resultGroup);
   const realKOMatches = buildKO(realStandings, resultB3, userKOW);
   const userStandings = computeStandings(groupPreds);
+
+  const realKOResolved = buildKO(realStandings, resultB3, resultKOW);
+  const dayAhead = new Date(now.getTime() + 24*60*60*1000);
+  const nextMatches = [...GROUP_MATCHES, ...realKOResolved]
+    .map(m => ({ m, k: m.kickoff || KO_KICKOFFS[m.id] }))
+    .filter(x => x.k > now && x.k <= dayAhead)
+    .sort((a,b) => a.k - b.k)
+    .map(x => x.m);
 
   const groupDone = GROUP_MATCHES.filter(m=>groupPreds[m.id]).length;
   const koDone = KO_DEF.filter(m=>userKOW[`w_${m.id}`]).length;
@@ -536,11 +545,17 @@ export default function App() {
       onNameSubmit={handleNameSubmit} onPinSubmit={handlePinSubmit} onSetPin={handleSetPin}
       onBack={()=>{setAuthStep("name");setAuthError("");setPinInput("");setPinConfirm("");}}
       now={now} count={Object.keys(allUsers).length}
-      resultsIn={Object.keys(resultGroup).length} onLB={()=>setView("leaderboard")} onHTP={()=>setView("howtoplay")} onMP={()=>setView("matchPicks")}/>}
+      nextMatches={nextMatches} allUsers={allUsers} resultGroup={resultGroup} resultKOW={resultKOW}
+      onMPMatch={(m)=>{
+        if (m.grp) setMpInitial({section:"group", activeGrp:m.grp, matchId:m.id});
+        else setMpInitial({section:"knockout", activeStage:m.stage, matchId:m.id});
+        setView("matchPicks");
+      }}
+      resultsIn={Object.keys(resultGroup).length} onLB={()=>setView("leaderboard")} onHTP={()=>setView("howtoplay")} onMP={()=>{setMpInitial(null);setView("matchPicks");}}/>}
 
     {view==="howtoplay" && <HowToPlayScreen onBack={()=>setView(username?"predict":"home")}/>}
 
-    {view==="matchPicks" && <MatchPicksScreen allUsers={allUsers} leaderboard={leaderboard} resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} onBack={()=>setView("home")}/>}
+    {view==="matchPicks" && <MatchPicksScreen allUsers={allUsers} leaderboard={leaderboard} resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} initial={mpInitial} onBack={()=>setView("home")}/>}
 
     {view==="adminLogin" && <div style={{padding:"48px 22px"}}>
       <div style={{background:CT.ink, color:"#fff", padding:"24px 22px"}}>
@@ -620,7 +635,7 @@ export default function App() {
 }
 
 // ═══ HOME / AUTH SCREEN ══════════════════════════════════════════════════════
-function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP, onMP }) {
+function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP, onMP, nextMatches, allUsers, resultGroup, resultKOW, onMPMatch }) {
   const firstKickoffMYT = fmtMYT(FIRST_KICKOFF.toISOString());
   const finalMatch = KO_DEF.find(m => m.stage === "F");
   const finalKickoff = finalMatch ? getKickoffUTC(finalMatch.date, finalMatch.et) : null;
@@ -673,6 +688,54 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
 
     {resultsIn>0 && <div style={{margin:"0 22px 24px", padding:"10px 14px", background:CT.green, color:"#fff"}}>
       <Kicker color="#fff">● {resultsIn} GROUP RESULTS IN — LEADERBOARD LIVE</Kicker>
+    </div>}
+
+    {nextMatches && nextMatches.length > 0 && <div style={{padding:"0 22px 24px"}}>
+      <div style={{marginBottom:14, display:"flex", alignItems:"baseline", gap:10}}>
+        <Kicker>NEXT 24 HOURS</Kicker>
+        <div style={{flex:1, height:1.5, background:CT.ink}}/>
+        <Kicker color={CT.muted}>{nextMatches.length}</Kicker>
+      </div>
+      {nextMatches.map(m => {
+        const isGroup = !!m.grp;
+        const color = isGroup ? GROUP_COLORS[m.grp] : STAGE_COLORS[m.stage];
+        let resultLabel = null;
+        let playersCount;
+        if (isGroup) {
+          const actual = resultGroup[m.id];
+          if (actual) resultLabel = actual==="home"?shortName(m.home):actual==="away"?shortName(m.away):"Draw";
+          playersCount = Object.values(allUsers||{}).filter(u => u.groupPreds?.[m.id]).length;
+        } else {
+          const actual = resultKOW[`w_${m.id}`];
+          if (actual) resultLabel = shortName(actual);
+          playersCount = Object.values(allUsers||{}).filter(u => u.userKOW?.[`w_${m.id}`]).length;
+        }
+        return <button key={m.id} onClick={()=>onMPMatch(m)} style={{
+          width:"100%", textAlign:"left", display:"block", background:"#fff",
+          border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10,
+          cursor:"pointer", borderRadius:0, fontFamily:"inherit", color:CT.ink,
+        }}>
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+            <div style={{display:"flex", gap:8, alignItems:"center"}}>
+              <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{m.id.toString().padStart(2,"0")}</Num>
+              <Kicker>{m.date} · {m.time} MYT</Kicker>
+            </div>
+            <Kicker>{m.venue}</Kicker>
+          </div>
+          {m.home && m.away ? <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10}}>
+            <TeamCell team={m.home}/><Serif size={13} color={CT.faint}>vs</Serif><TeamCell team={m.away} reverse/>
+          </div> : <div style={{padding:"6px 0", textAlign:"center"}}>
+            <Serif size={13} color={CT.faint}>TBD — teams not yet resolved.</Serif>
+          </div>}
+          <div style={{marginTop:10, paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10}}>
+            <div style={{display:"flex", alignItems:"baseline", gap:8, minWidth:0}}>
+              <Kicker>{resultLabel ? "RESULT" : "UPCOMING"}</Kicker>
+              {resultLabel && <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{resultLabel}</span>}
+            </div>
+            {playersCount > 0 && <Kicker color={CT.muted}>{playersCount} {playersCount===1?"PLAYER":"PLAYERS"} PICKED</Kicker>}
+          </div>
+        </button>;
+      })}
     </div>}
 
     <div style={{padding:"0 22px 24px"}}>
@@ -1286,10 +1349,19 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
 }
 
 // ═══ MATCH PICKS SCREEN ══════════════════════════════════════════════════════
-function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, resultKOW, onBack }) {
-  const [section, setSection] = useState("group");
-  const [activeGrp, setActiveGrp] = useState("A");
-  const [activeStage, setActiveStage] = useState("R32");
+function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, resultKOW, onBack, initial }) {
+  const [section, setSection] = useState(initial?.section || "group");
+  const [activeGrp, setActiveGrp] = useState(initial?.activeGrp || "A");
+  const [activeStage, setActiveStage] = useState(initial?.activeStage || "R32");
+
+  useEffect(() => {
+    if (!initial?.matchId) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById(`mp-match-${initial.matchId}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [initial]);
 
   const players = leaderboard.map(p => p.name);
   const realStandings = computeStandings(resultGroup);
@@ -1366,7 +1438,7 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
           const actual = resultGroup[m.id];
           const hasResult = !!actual;
           const actualLabel = actual==="home"?shortName(m.home):actual==="away"?shortName(m.away):actual==="draw"?"Draw":null;
-          return <div key={m.id} style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10}}>
+          return <div key={m.id} id={`mp-match-${m.id}`} style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10, scrollMarginTop:80}}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
               <div style={{display:"flex", gap:8, alignItems:"center"}}>
                 <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{m.id.toString().padStart(2,"0")}</Num>
@@ -1411,7 +1483,7 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
           const color = STAGE_COLORS[m.stage];
           const actual = resultKOW[`w_${m.id}`];
           const hasResult = !!actual;
-          return <div key={m.id} style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10}}>
+          return <div key={m.id} id={`mp-match-${m.id}`} style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10, scrollMarginTop:80}}>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
               <div style={{display:"flex", gap:8, alignItems:"center"}}>
                 <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{m.id}</Num>
