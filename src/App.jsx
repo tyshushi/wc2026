@@ -196,9 +196,6 @@ function getKickoffUTC(dateStr, timeStr) {
   const [y, mo, d] = dateStr.split("-").map(Number);
   return new Date(Date.UTC(y, mo-1, d, h+4, m));
 }
-function getMYTDate(d = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-}
 const GROUP_MATCHES = GROUP_RAW.map(m => ({ ...m, stage:`Group ${m.grp}`, ...etToMYT(m.date, m.et), kickoff: getKickoffUTC(m.date, m.et) }));
 const KO_KICKOFFS = Object.fromEntries(KO_DEF.map(m => [m.id, getKickoffUTC(m.date, m.et)]));
 const FIRST_KICKOFF = GROUP_MATCHES.reduce((a,b) => a.kickoff < b.kickoff ? a : b).kickoff;
@@ -402,11 +399,13 @@ export default function App() {
   const realKOMatches = buildKO(realStandings, resultB3, userKOW);
   const userStandings = computeStandings(groupPreds);
 
-  const todayMYT = getMYTDate(now);
   const realKOResolved = buildKO(realStandings, resultB3, resultKOW);
-  const todayMatches = [...GROUP_MATCHES, ...realKOResolved]
-    .filter(m => getMYTDate(m.kickoff || KO_KICKOFFS[m.id]) === todayMYT)
-    .sort((a,b) => (a.kickoff || KO_KICKOFFS[a.id]) - (b.kickoff || KO_KICKOFFS[b.id]));
+  const upcoming = [...GROUP_MATCHES, ...realKOResolved]
+    .map(m => ({ m, k: m.kickoff || KO_KICKOFFS[m.id] }))
+    .filter(x => x.k > now)
+    .sort((a,b) => a.k - b.k);
+  const nextKickoff = upcoming.length ? upcoming[0].k.getTime() : null;
+  const nextMatches = upcoming.filter(x => x.k.getTime() === nextKickoff).map(x => x.m);
 
   const groupDone = GROUP_MATCHES.filter(m=>groupPreds[m.id]).length;
   const koDone = KO_DEF.filter(m=>userKOW[`w_${m.id}`]).length;
@@ -546,7 +545,7 @@ export default function App() {
       onNameSubmit={handleNameSubmit} onPinSubmit={handlePinSubmit} onSetPin={handleSetPin}
       onBack={()=>{setAuthStep("name");setAuthError("");setPinInput("");setPinConfirm("");}}
       now={now} count={Object.keys(allUsers).length}
-      todayMatches={todayMatches} allUsers={allUsers} resultGroup={resultGroup} resultKOW={resultKOW}
+      nextMatches={nextMatches} allUsers={allUsers} resultGroup={resultGroup} resultKOW={resultKOW}
       onMPMatch={(m)=>{
         if (m.grp) setMpInitial({section:"group", activeGrp:m.grp, matchId:m.id});
         else setMpInitial({section:"knockout", activeStage:m.stage, matchId:m.id});
@@ -636,7 +635,7 @@ export default function App() {
 }
 
 // ═══ HOME / AUTH SCREEN ══════════════════════════════════════════════════════
-function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP, onMP, todayMatches, allUsers, resultGroup, resultKOW, onMPMatch }) {
+function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP, onMP, nextMatches, allUsers, resultGroup, resultKOW, onMPMatch }) {
   const firstKickoffMYT = fmtMYT(FIRST_KICKOFF.toISOString());
   const finalMatch = KO_DEF.find(m => m.stage === "F");
   const finalKickoff = finalMatch ? getKickoffUTC(finalMatch.date, finalMatch.et) : null;
@@ -691,13 +690,13 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
       <Kicker color="#fff">● {resultsIn} GROUP RESULTS IN — LEADERBOARD LIVE</Kicker>
     </div>}
 
-    {todayMatches && todayMatches.length > 0 && <div style={{padding:"0 22px 24px"}}>
+    {nextMatches && nextMatches.length > 0 && <div style={{padding:"0 22px 24px"}}>
       <div style={{marginBottom:14, display:"flex", alignItems:"baseline", gap:10}}>
-        <Kicker>TODAY'S MATCHES</Kicker>
+        <Kicker>UP NEXT</Kicker>
         <div style={{flex:1, height:1.5, background:CT.ink}}/>
-        <Kicker color={CT.muted}>{todayMatches.length}</Kicker>
+        <Kicker color={CT.muted}>{nextMatches.length}</Kicker>
       </div>
-      {todayMatches.map(m => {
+      {nextMatches.map(m => {
         const isGroup = !!m.grp;
         const color = isGroup ? GROUP_COLORS[m.grp] : STAGE_COLORS[m.stage];
         let resultLabel = null;
@@ -719,7 +718,7 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
           <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
             <div style={{display:"flex", gap:8, alignItems:"center"}}>
               <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{m.id.toString().padStart(2,"0")}</Num>
-              <Kicker>{m.time} MYT</Kicker>
+              <Kicker>{m.date} · {m.time} MYT</Kicker>
             </div>
             <Kicker>{m.venue}</Kicker>
           </div>
