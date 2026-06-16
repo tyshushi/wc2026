@@ -196,8 +196,8 @@ function getKickoffUTC(dateStr, timeStr) {
   const [y, mo, d] = dateStr.split("-").map(Number);
   return new Date(Date.UTC(y, mo-1, d, h+4, m));
 }
-function getTodayET(d = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+function getMYTDate(d = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 }
 const GROUP_MATCHES = GROUP_RAW.map(m => ({ ...m, stage:`Group ${m.grp}`, ...etToMYT(m.date, m.et), kickoff: getKickoffUTC(m.date, m.et) }));
 const KO_KICKOFFS = Object.fromEntries(KO_DEF.map(m => [m.id, getKickoffUTC(m.date, m.et)]));
@@ -402,12 +402,11 @@ export default function App() {
   const realKOMatches = buildKO(realStandings, resultB3, userKOW);
   const userStandings = computeStandings(groupPreds);
 
-  const todayET = getTodayET(now);
+  const todayMYT = getMYTDate(now);
   const realKOResolved = buildKO(realStandings, resultB3, resultKOW);
-  const todayMatches = [
-    ...GROUP_MATCHES.filter(m => m.rawDate === todayET),
-    ...realKOResolved.filter(m => m.rawDate === todayET),
-  ].sort((a,b) => (a.kickoff || KO_KICKOFFS[a.id]) - (b.kickoff || KO_KICKOFFS[b.id]));
+  const todayMatches = [...GROUP_MATCHES, ...realKOResolved]
+    .filter(m => getMYTDate(m.kickoff || KO_KICKOFFS[m.id]) === todayMYT)
+    .sort((a,b) => (a.kickoff || KO_KICKOFFS[a.id]) - (b.kickoff || KO_KICKOFFS[b.id]));
 
   const groupDone = GROUP_MATCHES.filter(m=>groupPreds[m.id]).length;
   const koDone = KO_DEF.filter(m=>userKOW[`w_${m.id}`]).length;
