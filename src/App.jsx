@@ -386,9 +386,9 @@ export default function App() {
   const openPlayerDetail = (name, origin) => { setSelectedPlayer(name); setDetailOrigin(origin); setView("playerDetail"); };
 
   useEffect(() => { (async () => {
-    try { const u = await storageGet(USERS_KEY); if (u?.value) setAllUsers(JSON.parse(u.value)); } catch {}
-    try { const r = await storageGet(RESULTS_KEY); if (r?.value) { const d=JSON.parse(r.value); setResultGroup(d.group||{}); setResultB3(d.b3||{}); setResultKOW(d.ko||{}); setResultBonus(d.bonus||{champion:"",runnerUp:""}); } } catch {}
-    try { const s = await storageGet(SETTINGS_KEY); if (s?.value) { const merged = {...DEFAULT_SETTINGS, ...JSON.parse(s.value)}; console.log("[settings] loaded from Supabase:", merged); setSettings(merged); } } catch {}
+    try { const u = await storageGet(USERS_KEY); if (u?.value) setAllUsers(JSON.parse(u.value)); } catch { /* storage unavailable — fail silently */ }
+    try { const r = await storageGet(RESULTS_KEY); if (r?.value) { const d=JSON.parse(r.value); setResultGroup(d.group||{}); setResultB3(d.b3||{}); setResultKOW(d.ko||{}); setResultBonus(d.bonus||{champion:"",runnerUp:""}); } } catch { /* storage unavailable — fail silently */ }
+    try { const s = await storageGet(SETTINGS_KEY); if (s?.value) { const merged = {...DEFAULT_SETTINGS, ...JSON.parse(s.value)}; console.log("[settings] loaded from Supabase:", merged); setSettings(merged); } } catch { /* storage unavailable — fail silently */ }
     setLoading(false);
   })(); }, []);
 
