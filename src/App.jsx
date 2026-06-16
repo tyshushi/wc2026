@@ -405,8 +405,8 @@ export default function App() {
   const todayET = getTodayET(now);
   const realKOResolved = buildKO(realStandings, resultB3, resultKOW);
   const todayMatches = [
-    ...GROUP_MATCHES.filter(m => m.date === todayET),
-    ...realKOResolved.filter(m => m.date === todayET),
+    ...GROUP_MATCHES.filter(m => m.rawDate === todayET),
+    ...realKOResolved.filter(m => m.rawDate === todayET),
   ].sort((a,b) => (a.kickoff || KO_KICKOFFS[a.id]) - (b.kickoff || KO_KICKOFFS[b.id]));
 
   const groupDone = GROUP_MATCHES.filter(m=>groupPreds[m.id]).length;
