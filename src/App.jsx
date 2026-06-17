@@ -828,7 +828,7 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
         </div>
 
         {authStep==="name" && <>
-          <input style={inputDark} value={nameInput} onChange={e=>setNameInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&onNameSubmit()} placeholder='Your name — or "admin"' autoFocus/>
+          <input style={inputDark} value={nameInput} onChange={e=>setNameInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&onNameSubmit()} placeholder='Your name — or "admin"'/>
           {authError && <div style={{marginTop:10, padding:"6px 10px", background:CT.red, color:"#fff", fontFamily:FF.mono, fontSize:11, letterSpacing:"0.08em", textTransform:"uppercase"}}>{authError}</div>}
           <div style={{marginTop:14, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
             <Kicker color="#9c9789">NEW? SET A PIN NEXT</Kicker>
