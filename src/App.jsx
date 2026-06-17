@@ -406,6 +406,12 @@ export default function App() {
     .filter(x => x.k > now && x.k <= dayAhead)
     .sort((a,b) => a.k - b.k)
     .map(x => x.m);
+  const LIVE_WINDOW_MS = 2*60*60*1000;
+  const liveMatches = [...GROUP_MATCHES, ...realKOResolved]
+    .map(m => ({ m, k: m.kickoff || KO_KICKOFFS[m.id] }))
+    .filter(x => x.k <= now && now < new Date(x.k.getTime() + LIVE_WINDOW_MS))
+    .sort((a,b) => a.k - b.k)
+    .map(x => x.m);
 
   const groupDone = GROUP_MATCHES.filter(m=>groupPreds[m.id]).length;
   const koDone = KO_DEF.filter(m=>userKOW[`w_${m.id}`]).length;
@@ -545,7 +551,7 @@ export default function App() {
       onNameSubmit={handleNameSubmit} onPinSubmit={handlePinSubmit} onSetPin={handleSetPin}
       onBack={()=>{setAuthStep("name");setAuthError("");setPinInput("");setPinConfirm("");}}
       now={now} count={Object.keys(allUsers).length}
-      nextMatches={nextMatches} allUsers={allUsers} resultGroup={resultGroup} resultKOW={resultKOW}
+      nextMatches={nextMatches} liveMatches={liveMatches} leaderboard={leaderboard} allUsers={allUsers} resultGroup={resultGroup} resultKOW={resultKOW}
       onMPMatch={(m)=>{
         if (m.grp) setMpInitial({section:"group", activeGrp:m.grp, matchId:m.id});
         else setMpInitial({section:"knockout", activeStage:m.stage, matchId:m.id});
@@ -635,7 +641,7 @@ export default function App() {
 }
 
 // ═══ HOME / AUTH SCREEN ══════════════════════════════════════════════════════
-function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP, onMP, nextMatches, allUsers, resultGroup, resultKOW, onMPMatch }) {
+function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP, onMP, nextMatches, liveMatches, leaderboard, allUsers, resultGroup, resultKOW, onMPMatch }) {
   const firstKickoffMYT = fmtMYT(FIRST_KICKOFF.toISOString());
   const finalMatch = KO_DEF.find(m => m.stage === "F");
   const finalKickoff = finalMatch ? getKickoffUTC(finalMatch.date, finalMatch.et) : null;
@@ -688,6 +694,80 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
 
     {resultsIn>0 && <div style={{margin:"0 22px 24px", padding:"10px 14px", background:CT.green, color:"#fff"}}>
       <Kicker color="#fff">● {resultsIn} GROUP RESULTS IN — LEADERBOARD LIVE</Kicker>
+    </div>}
+
+    {liveMatches && liveMatches.length > 0 && <div style={{padding:"0 22px 24px"}}>
+      <div style={{marginBottom:14, display:"flex", alignItems:"baseline", gap:10}}>
+        <Kicker color={CT.red}>● LIVE NOW</Kicker>
+        <div style={{flex:1, height:1.5, background:CT.ink}}/>
+        <Kicker color={CT.muted}>{liveMatches.length}</Kicker>
+      </div>
+      {liveMatches.map(m => {
+        const isGroup = !!m.grp;
+        const color = isGroup ? GROUP_COLORS[m.grp] : STAGE_COLORS[m.stage];
+        const actual = isGroup ? resultGroup[m.id] : resultKOW[`w_${m.id}`];
+        const hasResult = !!actual;
+        let resultLabel = null;
+        if (isGroup) {
+          if (actual) resultLabel = actual==="home"?shortName(m.home):actual==="away"?shortName(m.away):"Draw";
+        } else {
+          if (actual) resultLabel = shortName(actual);
+        }
+        const players = (leaderboard||[]).map(p => p.name);
+        return <button key={m.id} onClick={()=>onMPMatch(m)} style={{
+          width:"100%", textAlign:"left", display:"block", background:"#fff",
+          border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10,
+          cursor:"pointer", borderRadius:0, fontFamily:"inherit", color:CT.ink,
+        }}>
+          <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
+            <div style={{display:"flex", gap:8, alignItems:"center"}}>
+              <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{m.id.toString().padStart(2,"0")}</Num>
+              <Kicker>{m.date} · {m.time} MYT</Kicker>
+              <Kicker color={CT.red}>● LIVE</Kicker>
+            </div>
+            <Kicker>{m.venue}</Kicker>
+          </div>
+          {m.home && m.away ? <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10}}>
+            <TeamCell team={m.home}/><Serif size={13} color={CT.faint}>vs</Serif><TeamCell team={m.away} reverse/>
+          </div> : <div style={{padding:"6px 0", textAlign:"center"}}>
+            <Serif size={13} color={CT.faint}>TBD — teams not yet resolved.</Serif>
+          </div>}
+          <div style={{marginTop:10, paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+            <Kicker>{hasResult ? "RESULT" : "STATUS"}</Kicker>
+            <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{hasResult ? resultLabel : "In Progress"}</span>
+          </div>
+          <div style={{marginTop:12, paddingTop:10, borderTop:`1px solid ${CT.rule}`}}>
+            <div style={{display:"grid", gridTemplateColumns: hasResult ? "1fr auto 52px" : "1fr auto", gap:10, alignItems:"center", marginBottom:2}}>
+              <Kicker>PLAYER</Kicker>
+              <Kicker>PICK</Kicker>
+              {hasResult && <Kicker style={{textAlign:"right"}}>PTS</Kicker>}
+            </div>
+            {players.length === 0
+              ? <div style={{padding:"10px 0", fontFamily:FF.sans, fontSize:13, color:CT.faint}}>No players yet.</div>
+              : players.map(name => {
+                  let label, made, earned, ok;
+                  if (isGroup) {
+                    const pick = allUsers[name]?.groupPreds?.[m.id];
+                    made = !!pick;
+                    ok = !!(pick && actual && pick===actual);
+                    earned = ok ? (actual==="draw"?GROUP_WIN_PTS+DRAW_BONUS_PTS:GROUP_WIN_PTS) : 0;
+                    label = pick==="home"?shortName(m.home):pick==="away"?shortName(m.away):pick==="draw"?"Draw":"";
+                  } else {
+                    const pick = allUsers[name]?.userKOW?.[`w_${m.id}`];
+                    made = !!pick;
+                    ok = !!(pick && actual && pick===actual);
+                    earned = ok ? (STAGE_POINTS[m.stage] || 0) : 0;
+                    label = pick ? shortName(pick) : "";
+                  }
+                  return <div key={name} style={{display:"grid", gridTemplateColumns: hasResult ? "1fr auto 52px" : "1fr auto", gap:10, alignItems:"center", padding:"8px 0", borderTop:`1px solid ${CT.rule}`}}>
+                    <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:500, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</span>
+                    <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:600, color: made ? (hasResult && ok ? CT.green : CT.ink) : CT.faint}}>{made ? label : "—"}</span>
+                    {hasResult && <Num style={{fontSize:13, fontWeight:700, textAlign:"right", color: earned>0?CT.green:CT.ink}}>{made ? earned : "—"}</Num>}
+                  </div>;
+                })}
+          </div>
+        </button>;
+      })}
     </div>}
 
     {nextMatches && nextMatches.length > 0 && <div style={{padding:"0 22px 24px"}}>
