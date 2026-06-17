@@ -550,7 +550,7 @@ export default function App() {
       authStep={authStep} authError={authError} pendingName={pendingName}
       onNameSubmit={handleNameSubmit} onPinSubmit={handlePinSubmit} onSetPin={handleSetPin}
       onBack={()=>{setAuthStep("name");setAuthError("");setPinInput("");setPinConfirm("");}}
-      now={now} count={Object.keys(allUsers).length}
+      count={Object.keys(allUsers).length}
       nextMatches={nextMatches} liveMatches={liveMatches} leaderboard={leaderboard} allUsers={allUsers} resultGroup={resultGroup} resultKOW={resultKOW}
       onMPMatch={(m)=>{
         if (m.grp) setMpInitial({section:"group", activeGrp:m.grp, matchId:m.id});
@@ -641,15 +641,11 @@ export default function App() {
 }
 
 // ═══ HOME / AUTH SCREEN ══════════════════════════════════════════════════════
-function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, now, count, resultsIn, onLB, onHTP, onMP, nextMatches, liveMatches, leaderboard, allUsers, resultGroup, resultKOW, onMPMatch }) {
-  const firstKickoffMYT = fmtMYT(FIRST_KICKOFF.toISOString());
-  const finalMatch = KO_DEF.find(m => m.stage === "F");
-  const finalKickoff = finalMatch ? getKickoffUTC(finalMatch.date, finalMatch.et) : null;
-  const finalMYT = finalKickoff ? fmtMYT(finalKickoff.toISOString()) : "—";
-  const tournamentStarted = now >= FIRST_KICKOFF;
-  const groupAllStarted = GROUP_MATCHES.every(m => now >= m.kickoff);
-  const koAllStarted = KO_DEF.every(m => now >= KO_KICKOFFS[m.id]);
+function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, count, resultsIn, onLB, onHTP, onMP, nextMatches, liveMatches, leaderboard, allUsers, resultGroup, resultKOW, onMPMatch }) {
   return <>
+    <div style={{background:CT.red, color:"#fff", padding:"9px 16px", textAlign:"center", fontFamily:FF.sans, fontSize:13, fontWeight:600, letterSpacing:"-0.005em"}}>
+      ⚽ Group Stage in progress · Bracket picks open at Round of 32
+    </div>
     <div style={{background:CT.ink, padding:"14px 22px", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
       <Wordmark inverse/><Kicker color="#9c9789">MYT · KUALA LUMPUR</Kicker>
     </div>
@@ -673,22 +669,6 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
         <span style={{fontFamily:FF.sans, fontSize:14, lineHeight:1.55, color:CT.ink2}}>
           Pick all 72 group fixtures, build the full knockout bracket, and lock in your champion + runner-up. Highest credits total across the tournament wins.
         </span>
-      </div>
-    </div>
-
-    <div style={{padding:"0 22px 24px"}}>
-      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
-        <PhaseBlock label="GROUP STAGE" title="Per-match locking" deadline={`First kickoff · ${firstKickoffMYT}`} color={CT.red}
-          state={groupAllStarted?"CLOSED":"OPEN"}/>
-        <PhaseBlock label="BRACKET" title="Per-match locking" deadline={`Final · ${finalMYT}`} color={CT.blue}
-          state={koAllStarted?"CLOSED":"OPEN"}/>
-      </div>
-      <div style={{marginTop:10, padding:"10px 14px", background:CT.ink, color:"#fff"}}>
-        <Kicker color={CT.yellow}>● BONUS PICKS</Kicker>
-        <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, lineHeight:1.5}}>
-          Pick your Champion (+40 pts) and Runner-up (+20 pts) before the tournament begins. Locks at the first kickoff · {firstKickoffMYT}.
-        </div>
-        {tournamentStarted && <div style={{marginTop:6}}><Kicker color={CT.red}>● BONUS PICKS LOCKED</Kicker></div>}
       </div>
     </div>
 
@@ -902,20 +882,6 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
       ))}
     </div>
   </>;
-}
-
-function PhaseBlock({ label, title, deadline, state, color }) {
-  const isOpen = state === "OPEN";
-  return <div style={{background: isOpen?color:CT.paper2, color: isOpen?"#fff":CT.ink, padding:"14px 14px 12px", border:`1.5px solid ${isOpen?color:CT.ink}`, opacity:isOpen?1:0.85}}>
-    <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10}}>
-      <Kicker color={isOpen?"#fff":CT.muted}>{label}</Kicker>
-      <span style={{fontFamily:FF.mono, fontSize:9, fontWeight:700, letterSpacing:"0.16em", padding:"2px 5px", background:isOpen?"#fff":CT.ink, color:isOpen?color:"#fff"}}>{state}</span>
-    </div>
-    <div style={{fontFamily:FF.display, fontWeight:800, fontSize:22, letterSpacing:"-0.03em", lineHeight:1}}>{title}</div>
-    <div style={{marginTop:14, paddingTop:10, borderTop:`1px solid ${isOpen?"rgba(255,255,255,0.3)":CT.rule}`}}>
-      <Num style={{fontSize:10, fontWeight:600, color:isOpen?"#fff":CT.muted, opacity:isOpen?0.85:1, letterSpacing:"0.02em"}}>{deadline}</Num>
-    </div>
-  </div>;
 }
 
 // ═══ GROUP STAGE TAB ═════════════════════════════════════════════════════════
