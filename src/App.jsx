@@ -708,6 +708,54 @@ export default function App() {
   </div>;
 }
 
+// ─── MATCH CARD PER-PLAYER PICKS ─────────────────────────────────────────────
+// Shared by the Live Now and Next 24 Hours home-screen cards. Lists every
+// player's pick for the match, sorted by leaderboard standing (players prop is
+// already ordered). Group picks show the team name (or "Draw"); knockout picks
+// show flag + team name. When a result is in, correct picks turn green and the
+// points earned are shown.
+function MatchPlayerPicks({ m, isGroup, players, allUsers, actual }) {
+  const hasResult = !!actual;
+  return <div style={{marginTop:12, paddingTop:10, borderTop:`1px solid ${CT.rule}`}}>
+    <div style={{display:"grid", gridTemplateColumns: hasResult ? "1fr auto 52px" : "1fr auto", gap:10, alignItems:"center", marginBottom:2}}>
+      <Kicker>PLAYER</Kicker>
+      <Kicker>PICK</Kicker>
+      {hasResult && <Kicker style={{textAlign:"right"}}>PTS</Kicker>}
+    </div>
+    {players.length === 0
+      ? <div style={{padding:"10px 0", fontFamily:FF.sans, fontSize:13, color:CT.faint}}>No players yet.</div>
+      : players.map(name => {
+          let made, earned, ok, pickNode;
+          if (isGroup) {
+            const pick = allUsers[name]?.groupPreds?.[m.id];
+            made = !!pick;
+            ok = !!(pick && actual && pick===actual);
+            earned = ok ? (actual==="draw"?GROUP_WIN_PTS+DRAW_BONUS_PTS:GROUP_WIN_PTS) : 0;
+            const label = pick==="home"?shortName(m.home):pick==="away"?shortName(m.away):pick==="draw"?"Draw":"";
+            pickNode = made
+              ? <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:600, color: hasResult && ok ? CT.green : CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{label}</span>
+              : <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:600, color:CT.faint}}>—</span>;
+          } else {
+            const pick = allUsers[name]?.userKOW?.[`w_${m.id}`];
+            made = !!pick;
+            ok = !!(pick && actual && pick===actual);
+            earned = ok ? (STAGE_POINTS[m.stage] || 0) : 0;
+            pickNode = made
+              ? <div style={{display:"flex", alignItems:"center", gap:6, minWidth:0}}>
+                  <Flag team={pick} size={13}/>
+                  <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:600, color: hasResult && ok ? CT.green : CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{shortName(pick)}</span>
+                </div>
+              : <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:600, color:CT.faint}}>—</span>;
+          }
+          return <div key={name} style={{display:"grid", gridTemplateColumns: hasResult ? "1fr auto 52px" : "1fr auto", gap:10, alignItems:"center", padding:"8px 0", borderTop:`1px solid ${CT.rule}`}}>
+            <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:500, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</span>
+            {pickNode}
+            {hasResult && <Num style={{fontSize:13, fontWeight:700, textAlign:"right", color: earned>0?CT.green:CT.ink}}>{made ? earned : "—"}</Num>}
+          </div>;
+        })}
+  </div>;
+}
+
 // ═══ HOME / AUTH SCREEN ══════════════════════════════════════════════════════
 function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, count, resultsIn, onLB, onHTP, onMP, nextMatches, liveMatches, leaderboard, allUsers, resultGroup, resultKOW, resultBonus, onMPMatch }) {
   return <>
@@ -784,36 +832,7 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
             <Kicker>{hasResult ? "RESULT" : "STATUS"}</Kicker>
             <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{hasResult ? resultLabel : "In Progress"}</span>
           </div>
-          <div style={{marginTop:12, paddingTop:10, borderTop:`1px solid ${CT.rule}`}}>
-            <div style={{display:"grid", gridTemplateColumns: hasResult ? "1fr auto 52px" : "1fr auto", gap:10, alignItems:"center", marginBottom:2}}>
-              <Kicker>PLAYER</Kicker>
-              <Kicker>PICK</Kicker>
-              {hasResult && <Kicker style={{textAlign:"right"}}>PTS</Kicker>}
-            </div>
-            {players.length === 0
-              ? <div style={{padding:"10px 0", fontFamily:FF.sans, fontSize:13, color:CT.faint}}>No players yet.</div>
-              : players.map(name => {
-                  let label, made, earned, ok;
-                  if (isGroup) {
-                    const pick = allUsers[name]?.groupPreds?.[m.id];
-                    made = !!pick;
-                    ok = !!(pick && actual && pick===actual);
-                    earned = ok ? (actual==="draw"?GROUP_WIN_PTS+DRAW_BONUS_PTS:GROUP_WIN_PTS) : 0;
-                    label = pick==="home"?shortName(m.home):pick==="away"?shortName(m.away):pick==="draw"?"Draw":"";
-                  } else {
-                    const pick = allUsers[name]?.userKOW?.[`w_${m.id}`];
-                    made = !!pick;
-                    ok = !!(pick && actual && pick===actual);
-                    earned = ok ? (STAGE_POINTS[m.stage] || 0) : 0;
-                    label = pick ? shortName(pick) : "";
-                  }
-                  return <div key={name} style={{display:"grid", gridTemplateColumns: hasResult ? "1fr auto 52px" : "1fr auto", gap:10, alignItems:"center", padding:"8px 0", borderTop:`1px solid ${CT.rule}`}}>
-                    <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:500, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</span>
-                    <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:600, color: made ? (hasResult && ok ? CT.green : CT.ink) : CT.faint}}>{made ? label : "—"}</span>
-                    {hasResult && <Num style={{fontSize:13, fontWeight:700, textAlign:"right", color: earned>0?CT.green:CT.ink}}>{made ? earned : "—"}</Num>}
-                  </div>;
-                })}
-          </div>
+          <MatchPlayerPicks m={m} isGroup={isGroup} players={players} allUsers={allUsers} actual={actual}/>
         </button>;
       })}
     </div>}
@@ -827,17 +846,10 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
       {nextMatches.map(m => {
         const isGroup = !!m.grp;
         const color = isGroup ? GROUP_COLORS[m.grp] : STAGE_COLORS[m.stage];
+        const actual = isGroup ? resultGroup[m.id] : resultKOW[`w_${m.id}`];
         let resultLabel = null;
-        let playersCount;
-        if (isGroup) {
-          const actual = resultGroup[m.id];
-          if (actual) resultLabel = actual==="home"?shortName(m.home):actual==="away"?shortName(m.away):"Draw";
-          playersCount = Object.values(allUsers||{}).filter(u => u.groupPreds?.[m.id]).length;
-        } else {
-          const actual = resultKOW[`w_${m.id}`];
-          if (actual) resultLabel = shortName(actual);
-          playersCount = Object.values(allUsers||{}).filter(u => u.userKOW?.[`w_${m.id}`]).length;
-        }
+        if (actual) resultLabel = isGroup ? (actual==="home"?shortName(m.home):actual==="away"?shortName(m.away):"Draw") : shortName(actual);
+        const players = (leaderboard||[]).map(p => p.name);
         return <button key={m.id} onClick={()=>onMPMatch(m)} style={{
           width:"100%", textAlign:"left", display:"block", background:"#fff",
           border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10,
@@ -856,12 +868,10 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
             <Serif size={13} color={CT.faint}>TBD — teams not yet resolved.</Serif>
           </div>}
           <div style={{marginTop:10, paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:10}}>
-            <div style={{display:"flex", alignItems:"baseline", gap:8, minWidth:0}}>
-              <Kicker>{resultLabel ? "RESULT" : "UPCOMING"}</Kicker>
-              {resultLabel && <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{resultLabel}</span>}
-            </div>
-            {playersCount > 0 && <Kicker color={CT.muted}>{playersCount} {playersCount===1?"PLAYER":"PLAYERS"} PICKED</Kicker>}
+            <Kicker>{resultLabel ? "RESULT" : "UPCOMING"}</Kicker>
+            {resultLabel && <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{resultLabel}</span>}
           </div>
+          <MatchPlayerPicks m={m} isGroup={isGroup} players={players} allUsers={allUsers} actual={actual}/>
         </button>;
       })}
     </div>}
