@@ -218,6 +218,70 @@ function computeStandings(preds) {
   return out;
 }
 
+// ─── TIEBREAKERS ─────────────────────────────────────────────────────────────
+// Two or more teams level on points AND wins (after the normal sort) are tied
+// and need an explicit order. Admin-confirmed orders are stored per group; until
+// confirmed, tied teams get a provisional (stable, seeded) order.
+function seededShuffle(items, seed) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    h = (Math.imul(h, 1103515245) + 12345) >>> 0;
+    const j = h % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Adjacent teams in a sorted table that are level on points AND wins → tied segment.
+function detectTieGroups(table) {
+  if (!table || table.length < 2) return [];
+  const out = [];
+  let cur = [table[0]];
+  for (let i = 1; i < table.length; i++) {
+    const prev = table[i-1], t = table[i];
+    if (t.pts === prev.pts && t.w === prev.w) cur.push(t);
+    else { if (cur.length >= 2) out.push(cur); cur = [t]; }
+  }
+  if (cur.length >= 2) out.push(cur);
+  return out;
+}
+
+// Order one group's table with tiebreakers applied.
+// mode "full"  → if a confirmed order exists, use it for the whole group (bracket/actual).
+// mode "tieOnly" → only reorder tied segments (player projections), never scrambling
+//                  clearly-separated teams; uses confirmed relative order when present.
+function orderGroupStanding(group, table, tiebreakers, mode = "full") {
+  if (!table || !table.length) return { table: table || [], tie:false, confirmed:false };
+  const confirmedArr = tiebreakers && Array.isArray(tiebreakers[group]) && tiebreakers[group].length ? tiebreakers[group] : null;
+  const tieGroups = detectTieGroups(table);
+  const tie = tieGroups.length > 0;
+  if (confirmedArr && mode === "full") {
+    const byTeam = Object.fromEntries(table.map(t => [t.team, t]));
+    const ordered = confirmedArr.map(n => byTeam[n]).filter(Boolean);
+    table.forEach(t => { if (!confirmedArr.includes(t.team)) ordered.push(t); });
+    return { table: ordered, tie, confirmed:true };
+  }
+  const result = [...table];
+  tieGroups.forEach(tg => {
+    const start = table.findIndex(t => t.team === tg[0].team);
+    const names = tg.map(t => t.team);
+    const ordered = confirmedArr
+      ? [...names].sort((a,b) => confirmedArr.indexOf(a) - confirmedArr.indexOf(b))
+      : seededShuffle(names, group + "|" + [...names].sort().join("|"));
+    ordered.forEach((n,k) => { result[start+k] = table.find(t => t.team === n); });
+  });
+  return { table: result, tie, confirmed: !!confirmedArr };
+}
+
+// Apply tiebreakers to a full set of group standings (returns ordered tables per group).
+function applyTiebreakers(standings, tiebreakers) {
+  const out = {};
+  Object.keys(standings).forEach(g => { out[g] = orderGroupStanding(g, standings[g], tiebreakers).table; });
+  return out;
+}
+
 function resolveTeam(slot, standings, b3, koW) {
   if (!slot) return null;
   if (slot.type==="winner") return standings[slot.grp]?.[0]?.team||null;
@@ -242,6 +306,7 @@ function buildKO(standings, b3, koW) {
 const USERS_KEY = "wc2026_users_v6";
 const RESULTS_KEY = "wc2026_results_v6";
 const SETTINGS_KEY = "wc2026_settings_v6";
+const TIEBREAKERS_KEY = "wc2026_tiebreakers";
 const ADMIN_PW = "Bullgy@2026";
 const DEFAULT_SETTINGS = { registrationLocked:false, bonusOpen:true, groupOpen:true, bracketOpen:true };
 
@@ -365,6 +430,7 @@ export default function App() {
   const [resultKOW, setResultKOW] = useState({});
   const [resultBonus, setResultBonus] = useState({ champion:"", runnerUp:"" });
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [tiebreakers, setTiebreakers] = useState({});
 
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
@@ -386,6 +452,7 @@ export default function App() {
     try { const u = await storageGet(USERS_KEY); if (u?.value) setAllUsers(JSON.parse(u.value)); } catch { /* storage unavailable — fail silently */ }
     try { const r = await storageGet(RESULTS_KEY); if (r?.value) { const d=JSON.parse(r.value); setResultGroup(d.group||{}); setResultB3(d.b3||{}); setResultKOW(d.ko||{}); setResultBonus(d.bonus||{champion:"",runnerUp:""}); } } catch { /* storage unavailable — fail silently */ }
     try { const s = await storageGet(SETTINGS_KEY); if (s?.value) { const merged = {...DEFAULT_SETTINGS, ...JSON.parse(s.value)}; console.log("[settings] loaded from Supabase:", merged); setSettings(merged); } } catch { /* storage unavailable — fail silently */ }
+    try { const tb = await storageGet(TIEBREAKERS_KEY); if (tb?.value) setTiebreakers(JSON.parse(tb.value)); } catch { /* storage unavailable — fail silently */ }
     setLoading(false);
   })(); }, []);
 
@@ -393,9 +460,10 @@ export default function App() {
   const saveUsers = async u => { await storageSet(USERS_KEY, JSON.stringify(u)); setAllUsers(u); };
   const saveResults = async (grp,b3,ko,bonus) => { const b = bonus||resultBonus; await storageSet(RESULTS_KEY, JSON.stringify({group:grp,b3,ko,bonus:b})); setResultGroup(grp); setResultB3(b3); setResultKOW(ko); setResultBonus(b); };
   const saveSettings = async s => { console.log("[settings] saving to Supabase:", s); await storageSet(SETTINGS_KEY, JSON.stringify(s)); setSettings(s); };
+  const saveTiebreakers = async t => { await storageSet(TIEBREAKERS_KEY, JSON.stringify(t)); setTiebreakers(t); };
 
   const bonusLocked = settings.bonusOpen === false;
-  const realStandings = computeStandings(resultGroup);
+  const realStandings = applyTiebreakers(computeStandings(resultGroup), tiebreakers);
   const realKOMatches = buildKO(realStandings, resultB3, userKOW);
   const userStandings = computeStandings(groupPreds);
 
@@ -561,7 +629,7 @@ export default function App() {
 
     {view==="howtoplay" && <HowToPlayScreen onBack={()=>setView(username?"predict":"home")}/>}
 
-    {view==="matchPicks" && <MatchPicksScreen allUsers={allUsers} leaderboard={leaderboard} resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} initial={mpInitial} onBack={()=>setView("home")}/>}
+    {view==="matchPicks" && <MatchPicksScreen allUsers={allUsers} leaderboard={leaderboard} resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} tiebreakers={tiebreakers} initial={mpInitial} onBack={()=>setView("home")}/>}
 
     {view==="adminLogin" && <div style={{padding:"48px 22px"}}>
       <div style={{background:CT.ink, color:"#fff", padding:"24px 22px"}}>
@@ -578,14 +646,14 @@ export default function App() {
       </div>
     </div>}
 
-    {view==="admin" && <AdminPanel resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} resultBonus={resultBonus} settings={settings} allUsers={allUsers} leaderboard={leaderboard} onSaveResults={saveResults} onSaveSettings={saveSettings} onDeleteUser={name=>setConfirmDelete(name)} onBack={()=>setView("home")} showToast={showToast} onSelectPlayer={name=>openPlayerDetail(name, "admin")}/>}
+    {view==="admin" && <AdminPanel resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} resultBonus={resultBonus} settings={settings} tiebreakers={tiebreakers} allUsers={allUsers} leaderboard={leaderboard} onSaveResults={saveResults} onSaveSettings={saveSettings} onSaveTiebreakers={saveTiebreakers} onDeleteUser={name=>setConfirmDelete(name)} onBack={()=>setView("home")} showToast={showToast} onSelectPlayer={name=>openPlayerDetail(name, "admin")}/>}
 
     {view==="leaderboard" && <LeaderboardScreen leaderboard={leaderboard} resultsIn={Object.keys(resultGroup).length} onBack={()=>setView(username?"predict":"home")} count={Object.keys(allUsers).length} onSelectPlayer={name=>openPlayerDetail(name, "leaderboard")}/>}
 
     {view==="playerDetail" && <PlayerDetailScreen
       name={selectedPlayer}
       user={allUsers[selectedPlayer]}
-      resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} resultBonus={resultBonus}
+      resultGroup={resultGroup} resultB3={resultB3} resultKOW={resultKOW} resultBonus={resultBonus} tiebreakers={tiebreakers}
       onBack={()=>setView(detailOrigin === "admin" ? "admin" : "leaderboard")}/>}
 
     {view==="predict" && <>
@@ -631,7 +699,7 @@ export default function App() {
       </div>
 
       {subTab==="group" && <GroupStageTab groupPreds={groupPreds} onPick={setGroupPick} now={now} resultGroup={resultGroup} groupOpen={settings.groupOpen !== false}/>}
-      {subTab==="standings" && <StandingsTab standings={userStandings} groupPreds={groupPreds}/>}
+      {subTab==="standings" && <StandingsTab standings={userStandings} groupPreds={groupPreds} tiebreakers={tiebreakers}/>}
       {subTab==="bracket" && <BracketTab koMatches={realKOMatches} userKOW={userKOW} setKOPick={setKOPick} now={now} resultKOW={resultKOW} bracketOpen={settings.bracketOpen !== false}/>}
       {subTab==="bonus" && <BonusPicksTab champion={bonusChampion} runnerUp={bonusRunnerUp} onChampion={setChampionPick} onRunnerUp={setRunnerUpPick} locked={bonusLocked} resultBonus={resultBonus}/>}
     </>}
@@ -971,7 +1039,7 @@ function GroupCard({ match, pick, result, onPick, isOpen, color }) {
 }
 
 // ═══ STANDINGS TAB ═══════════════════════════════════════════════════════════
-function StandingsTab({ standings, groupPreds }) {
+function StandingsTab({ standings, groupPreds, tiebreakers }) {
   const done = GROUP_MATCHES.filter(m=>groupPreds[m.id]).length;
   return <div style={{padding:"22px 22px 36px"}}>
     <div style={{marginBottom:6}}><Kicker>PROJECTED TABLES</Kicker></div>
@@ -980,18 +1048,22 @@ function StandingsTab({ standings, groupPreds }) {
       {done<72 ? `${72-done} matches still unpicked — standings are partial. ` : ""}<span style={{color:CT.green, fontWeight:600}}>Top two advance</span>; eight best third-placed teams join them in the Round of 32.
     </div>
     <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:14}}>
-      {GROUPS.map(g=><StandingsCard key={g} group={g} table={standings[g]} color={GROUP_COLORS[g]}/>)}
+      {GROUPS.map(g=>{
+        const { table, tie, confirmed } = orderGroupStanding(g, standings[g], tiebreakers, "tieOnly");
+        return <StandingsCard key={g} group={g} table={table} color={GROUP_COLORS[g]} pending={tie && !confirmed}/>;
+      })}
     </div>
   </div>;
 }
 
-function StandingsCard({ group, table, color }) {
+function StandingsCard({ group, table, color, pending }) {
   if (!table || !table.length) return null;
   return <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`}}>
     <div style={{background:color, color:"#fff", padding:"7px 10px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
       <span style={{fontFamily:FF.display, fontWeight:800, fontSize:13, letterSpacing:"-0.02em"}}>GROUP {group}</span>
       <Num style={{fontSize:9, fontWeight:700, letterSpacing:"0.12em", color:"#fff", opacity:0.85}}>W·D·L·PTS</Num>
     </div>
+    {pending && <div style={{padding:"5px 10px", borderTop:`1px solid ${CT.rule}`, fontFamily:FF.mono, fontSize:9, fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase", color:CT.muted}}>⚠️ Pending tiebreaker</div>}
     {table.map((t,i)=>(
       <div key={t.team} style={{display:"grid", gridTemplateColumns:"14px 1fr auto", gap:6, alignItems:"center", padding:"7px 10px", borderTop:i>0?`1px solid ${CT.rule}`:"none", background:i<2?`${color}10`:"transparent"}}>
         <Num style={{fontSize:10, color:i<2?color:CT.faint, fontWeight:700}}>{i+1}</Num>
@@ -1002,6 +1074,45 @@ function StandingsCard({ group, table, color }) {
         <Num style={{fontSize:10, color:CT.muted, fontWeight:600}}>{t.w}·{t.d}·{t.l}·<span style={{color:CT.ink, fontWeight:700}}>{t.pts}</span></Num>
       </div>
     ))}
+  </div>;
+}
+
+// Admin standings card with tiebreaker controls (warning, swaps, confirm/reset).
+function AdminStandingsCard({ group, table, color, order, confirmed, onSwap, onConfirm, onReset }) {
+  if (!table || !table.length) return null;
+  const byTeam = Object.fromEntries(table.map(t => [t.team, t]));
+  const rows = (order || []).map(n => byTeam[n]).filter(Boolean);
+  table.forEach(t => { if (!rows.includes(t)) rows.push(t); });
+  const isTied = (a, b) => a && b && a.pts === b.pts && a.w === b.w;
+  const tiedRow = rows.map((t,i) => isTied(t, rows[i-1]) || isTied(t, rows[i+1]));
+  const hasTie = tiedRow.some(Boolean);
+  const unconfirmedTie = hasTie && !confirmed;
+  return <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`}}>
+    <div style={{background:color, color:"#fff", padding:"7px 10px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+      <span style={{fontFamily:FF.display, fontWeight:800, fontSize:13, letterSpacing:"-0.02em"}}>GROUP {group}</span>
+      <Num style={{fontSize:9, fontWeight:700, letterSpacing:"0.12em", color:"#fff", opacity:0.85}}>W·D·L·PTS</Num>
+    </div>
+    {unconfirmedTie && <div style={{background:CT.yellow, color:CT.ink, padding:"5px 10px", fontFamily:FF.mono, fontSize:9, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase"}}>⚠️ Tiebreaker required</div>}
+    {confirmed && <div style={{padding:"5px 10px", borderTop:`1px solid ${CT.rule}`, fontFamily:FF.mono, fontSize:9, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:CT.green}}>✓ Order confirmed</div>}
+    {rows.map((t,i)=>(
+      <div key={t.team}>
+        <div style={{display:"grid", gridTemplateColumns:"14px 1fr auto", gap:6, alignItems:"center", padding:"7px 10px", borderTop:i>0?`1px solid ${CT.rule}`:"none", background:tiedRow[i]&&!confirmed?`${CT.yellow}22`:i<2?`${color}10`:"transparent"}}>
+          <Num style={{fontSize:10, color:i<2?color:CT.faint, fontWeight:700}}>{i+1}</Num>
+          <div style={{display:"flex", alignItems:"center", gap:6, minWidth:0}}>
+            <Flag team={t.team} size={11}/>
+            <span style={{fontFamily:FF.sans, fontSize:11, fontWeight:i<2?700:500, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{shortName(t.team)}</span>
+          </div>
+          <Num style={{fontSize:10, color:CT.muted, fontWeight:600}}>{t.w}·{t.d}·{t.l}·<span style={{color:CT.ink, fontWeight:700}}>{t.pts}</span></Num>
+        </div>
+        {!confirmed && isTied(t, rows[i+1]) && <button onClick={()=>onSwap(i,i+1)} style={{display:"block", width:"100%", padding:"3px 10px", border:"none", borderTop:`1px dashed ${CT.rule2}`, background:`${CT.yellow}12`, color:CT.muted, fontFamily:FF.mono, fontSize:9, fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase", cursor:"pointer", textAlign:"center"}}>⇅ Swap {shortName(t.team)} / {shortName(rows[i+1].team)}</button>}
+      </div>
+    ))}
+    {unconfirmedTie && <div style={{padding:"8px 10px", borderTop:`1px solid ${CT.rule}`}}>
+      <Btn color={CT.green} sm full onClick={onConfirm}>Confirm order</Btn>
+    </div>}
+    {confirmed && <div style={{padding:"8px 10px", borderTop:`1px solid ${CT.rule}`}}>
+      <Btn ghost sm full onClick={onReset}>Reset &amp; re-confirm</Btn>
+    </div>}
   </div>;
 }
 
@@ -1176,7 +1287,7 @@ function LeaderboardScreen({ leaderboard, resultsIn, onBack, count, onSelectPlay
 }
 
 // ═══ PLAYER DETAIL SCREEN ════════════════════════════════════════════════════
-function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resultBonus, onBack }) {
+function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resultBonus, tiebreakers, onBack }) {
   const [stage, setStage] = useState("R32");
   const [activeGrp, setActiveGrp] = useState("A");
 
@@ -1200,7 +1311,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
   const bonusRunnerUp = user.bonusRunnerUp || "";
   const score = calcPoints(user, resultGroup, resultKOW, resultBonus);
 
-  const realStandings = computeStandings(resultGroup);
+  const realStandings = applyTiebreakers(computeStandings(resultGroup), tiebreakers);
   const actualKOMatches = buildKO(realStandings, resultB3, resultKOW);
 
   const champActual = resultBonus?.champion || "";
@@ -1395,7 +1506,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
 }
 
 // ═══ MATCH PICKS SCREEN ══════════════════════════════════════════════════════
-function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, resultKOW, onBack, initial }) {
+function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, resultKOW, tiebreakers, onBack, initial }) {
   const [section, setSection] = useState(initial?.section || "group");
   const [activeGrp, setActiveGrp] = useState(initial?.activeGrp || "A");
   const [activeStage, setActiveStage] = useState(initial?.activeStage || "R32");
@@ -1410,7 +1521,7 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
   }, [initial]);
 
   const players = leaderboard.map(p => p.name);
-  const realStandings = computeStandings(resultGroup);
+  const realStandings = applyTiebreakers(computeStandings(resultGroup), tiebreakers);
   const koMatches = buildKO(realStandings, resultB3, resultKOW);
   const stages = ["R32","R16","QF","SF","3P","F"];
 
@@ -1560,16 +1671,41 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
 }
 
 // ═══ ADMIN PANEL ═════════════════════════════════════════════════════════════
-function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, allUsers, leaderboard, onSaveResults, onSaveSettings, onDeleteUser, onBack, showToast, onSelectPlayer }) {
+function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, tiebreakers, allUsers, leaderboard, onSaveResults, onSaveSettings, onSaveTiebreakers, onDeleteUser, onBack, showToast, onSelectPlayer }) {
   const [adminTab, setAdminTab] = useState("settings");
   const [activeGrp, setActiveGrp] = useState("A");
   const [activeKOStage, setActiveKOStage] = useState("R32");
   const [localSettings, setLocalSettings] = useState({...settings});
   const [localB3, setLocalB3] = useState({...resultB3});
   const [localKOW, setLocalKOW] = useState({...resultKOW});
+  const [tbWork, setTbWork] = useState({});
 
-  const adminStandings = computeStandings(resultGroup);
+  const adminStandingsRaw = computeStandings(resultGroup);
+  const adminStandings = applyTiebreakers(adminStandingsRaw, tiebreakers);
   const adminKOMatches = buildKO(adminStandings, localB3, localKOW);
+
+  // Provisional/working order of team names for a group (confirmed → working edits → provisional).
+  const tbOrderFor = g => {
+    if (tbWork[g]) return tbWork[g];
+    if (Array.isArray(tiebreakers[g]) && tiebreakers[g].length) return tiebreakers[g].slice();
+    return orderGroupStanding(g, adminStandingsRaw[g], null).table.map(t => t.team);
+  };
+  const swapTb = (g, i, j) => {
+    const cur = tbOrderFor(g).slice();
+    [cur[i], cur[j]] = [cur[j], cur[i]];
+    setTbWork(w => ({...w, [g]: cur}));
+  };
+  async function confirmTb(g) {
+    await onSaveTiebreakers({...tiebreakers, [g]: tbOrderFor(g)});
+    setTbWork(w => { const c = {...w}; delete c[g]; return c; });
+    showToast("Tiebreaker order confirmed");
+  }
+  async function resetTb(g) {
+    const nt = {...tiebreakers}; delete nt[g];
+    await onSaveTiebreakers(nt);
+    setTbWork(w => { const c = {...w}; delete c[g]; return c; });
+    showToast("Tiebreaker order reset");
+  }
 
   async function saveGrp(id,val) { const r={...resultGroup,[id]:val}; await onSaveResults(r,localB3,localKOW,resultBonus); showToast("Result saved"); }
   async function clearGrp(id) { const r={...resultGroup}; delete r[id]; await onSaveResults(r,localB3,localKOW,resultBonus); showToast("Cleared"); }
@@ -1798,16 +1934,18 @@ function AdminPanel({ resultGroup, resultB3, resultKOW, resultBonus, settings, a
 
       {adminTab==="standings" && <>
         <div style={{background:CT.green, color:"#fff", padding:"10px 14px", marginBottom:14}}>
-          <Kicker color="#fff">● LIVE STANDINGS FROM ACTUAL GROUP RESULTS</Kicker>
+          <Kicker color="#fff">● LIVE STANDINGS FROM ACTUAL GROUP RESULTS · CONFIRM TIES TO LOCK BRACKET ORDER</Kicker>
         </div>
         <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
           {GROUPS.map(g=>{
-            const tab = adminStandings[g];
+            const tab = adminStandingsRaw[g];
             if (!tab || !tab.length) return <div key={g} style={{background:"#fff", border:`1.5px solid ${CT.rule2}`, padding:"14px", textAlign:"center"}}>
               <Kicker>GROUP {g}</Kicker>
               <div style={{marginTop:6, fontSize:12, color:CT.faint}}>No results yet</div>
             </div>;
-            return <StandingsCard key={g} group={g} table={tab} color={GROUP_COLORS[g]}/>;
+            return <AdminStandingsCard key={g} group={g} table={tab} color={GROUP_COLORS[g]}
+              order={tbOrderFor(g)} confirmed={Array.isArray(tiebreakers[g]) && tiebreakers[g].length>0}
+              onSwap={(i,j)=>swapTb(g,i,j)} onConfirm={()=>confirmTb(g)} onReset={()=>resetTb(g)}/>;
           })}
         </div>
       </>}
