@@ -619,7 +619,7 @@ export default function App() {
       onNameSubmit={handleNameSubmit} onPinSubmit={handlePinSubmit} onSetPin={handleSetPin}
       onBack={()=>{setAuthStep("name");setAuthError("");setPinInput("");setPinConfirm("");}}
       count={Object.keys(allUsers).length}
-      nextMatches={nextMatches} liveMatches={liveMatches} leaderboard={leaderboard} allUsers={allUsers} resultGroup={resultGroup} resultKOW={resultKOW}
+      nextMatches={nextMatches} liveMatches={liveMatches} leaderboard={leaderboard} allUsers={allUsers} resultGroup={resultGroup} resultKOW={resultKOW} resultBonus={resultBonus}
       onMPMatch={(m)=>{
         if (m.grp) setMpInitial({section:"group", activeGrp:m.grp, matchId:m.id});
         else setMpInitial({section:"knockout", activeStage:m.stage, matchId:m.id});
@@ -709,7 +709,7 @@ export default function App() {
 }
 
 // ═══ HOME / AUTH SCREEN ══════════════════════════════════════════════════════
-function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, count, resultsIn, onLB, onHTP, onMP, nextMatches, liveMatches, leaderboard, allUsers, resultGroup, resultKOW, onMPMatch }) {
+function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm, setPinConfirm, authStep, authError, pendingName, onNameSubmit, onPinSubmit, onSetPin, onBack, count, resultsIn, onLB, onHTP, onMP, nextMatches, liveMatches, leaderboard, allUsers, resultGroup, resultKOW, resultBonus, onMPMatch }) {
   return <>
     <div style={{background:CT.red, color:"#fff", padding:"9px 16px", textAlign:"center", fontFamily:FF.sans, fontSize:13, fontWeight:600, letterSpacing:"-0.005em"}}>
       ⚽ Group Stage in progress · Bracket picks open at Round of 32
@@ -864,6 +864,41 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
           </div>
         </button>;
       })}
+    </div>}
+
+    {leaderboard && leaderboard.length > 0 && <div style={{padding:"0 22px 24px"}}>
+      <div style={{marginBottom:14, display:"flex", alignItems:"baseline", gap:10}}>
+        <Kicker>BONUS PICKS · CHAMPION & RUNNER-UP</Kicker>
+        <div style={{flex:1, height:1.5, background:CT.ink}}/>
+        <Kicker color={CT.muted}>{leaderboard.length}</Kicker>
+      </div>
+      <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px"}}>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, alignItems:"center", marginBottom:2}}>
+          <Kicker>PLAYER</Kicker>
+          <Kicker>CHAMPION</Kicker>
+          <Kicker>RUNNER-UP</Kicker>
+        </div>
+        {leaderboard.map(p => {
+          const u = allUsers[p.name] || {};
+          const champ = u.bonusChampion || "";
+          const ru = u.bonusRunnerUp || "";
+          const champActual = resultBonus?.champion || "";
+          const ruActual = resultBonus?.runnerUp || "";
+          const champOk = !!(champ && champActual && champ===champActual);
+          const ruOk = !!(ru && ruActual && ru===ruActual);
+          const PickCell = ({ team, ok }) => team
+            ? <div style={{display:"flex", alignItems:"center", gap:6, minWidth:0}}>
+                <Flag team={team} size={13}/>
+                <span style={{fontFamily:FF.sans, fontSize:13, fontWeight: ok?700:600, color: ok?CT.green:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{shortName(team)}</span>
+              </div>
+            : <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:600, color:CT.faint}}>—</span>;
+          return <div key={p.name} style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, alignItems:"center", padding:"8px 0", borderTop:`1px solid ${CT.rule}`}}>
+            <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:500, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{p.name}</span>
+            <PickCell team={champ} ok={champOk}/>
+            <PickCell team={ru} ok={ruOk}/>
+          </div>;
+        })}
+      </div>
     </div>}
 
     <div style={{padding:"0 22px 24px"}}>
@@ -1507,7 +1542,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
 
 // ═══ MATCH PICKS SCREEN ══════════════════════════════════════════════════════
 function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, resultKOW, tiebreakers, onBack, initial }) {
-  const [section, setSection] = useState(initial?.section || "group");
+  const [section, setSection] = useState(initial?.section || "knockout");
   const [activeGrp, setActiveGrp] = useState(initial?.activeGrp || "A");
   const [activeStage, setActiveStage] = useState(initial?.activeStage || "R32");
 
