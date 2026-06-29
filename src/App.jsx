@@ -525,7 +525,7 @@ export default function App() {
     setUsername(pendingName); setGroupPreds(existing.groupPreds||{}); setUserKOW(existing.userKOW||{});
     setBonusChampion(existing.bonusChampion||""); setBonusRunnerUp(existing.bonusRunnerUp||"");
     setAuthStep("name"); setAuthError(""); setNameInput(""); setPinInput("");
-    setSubTab("group"); setView("predict");
+    setSubTab(settings.bracketOpen !== false ? "bracket" : "group"); setView("predict");
   }
   async function handleSetPin() {
     if (pinInput.length !== 4 || !/^\d+$/.test(pinInput)) { setAuthError("PIN must be exactly 4 digits."); return; }
@@ -535,7 +535,7 @@ export default function App() {
     const upd = {...allUsers, [pendingName]: newUser}; await saveUsers(upd);
     setUsername(pendingName); setGroupPreds({}); setUserKOW({}); setBonusChampion(""); setBonusRunnerUp("");
     setAuthStep("name"); setAuthError(""); setNameInput(""); setPinInput(""); setPinConfirm("");
-    setSubTab("group"); setView("predict"); showToast("Welcome — your PIN is set.");
+    setSubTab(settings.bracketOpen !== false ? "bracket" : "group"); setView("predict"); showToast("Welcome — your PIN is set.");
   }
   async function handleSave() {
     const existing = allUsers[username] || {};
