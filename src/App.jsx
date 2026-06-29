@@ -1168,9 +1168,24 @@ function AdminStandingsCard({ group, table, color, order, confirmed, onSwap, onC
 
 // ═══ BRACKET TAB ═════════════════════════════════════════════════════════════
 function BracketTab({ koMatches, userKOW, setKOPick, now, resultKOW, bracketOpen }) {
-  const [stage, setStage] = useState("R32");
   const stages = ["R32","R16","QF","SF","3P","F"];
+  // The very next match that has yet to kick off (earliest upcoming kickoff).
+  const nextMatch = koMatches
+    .filter(m => now < KO_KICKOFFS[m.id])
+    .sort((a,b) => KO_KICKOFFS[a.id] - KO_KICKOFFS[b.id])[0] || null;
+  const [stage, setStage] = useState(nextMatch ? nextMatch.stage : "R32");
   const stageColor = STAGE_COLORS[stage];
+
+  // On open, jump to the next not-yet-started match (or the top if none remain).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!nextMatch) { window.scrollTo(0, 0); return; }
+      const el = document.getElementById(`ko-match-${nextMatch.id}`);
+      if (el) el.scrollIntoView({ block: "start" });
+    }, 120);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return <div style={{paddingBottom:36}}>
     <div style={{padding:"22px 22px 0"}}>
@@ -1200,14 +1215,14 @@ function BracketTab({ koMatches, userKOW, setKOPick, now, resultKOW, bracketOpen
         <Serif size={22} color={stageColor}>{STAGE_LABEL[stage]}</Serif>
         <div style={{flex:1, height:2, background:stageColor}}/>
       </div>
-      {koMatches.filter(m=>m.stage===stage).map(m=><KOCard key={m.id} match={m} pick={userKOW[`w_${m.id}`]} result={resultKOW[`w_${m.id}`]} onPick={t=>setKOPick(m.id,t)} isOpen={koPickOpen(m.id, bracketOpen, now)} color={stageColor}/>)}
+      {koMatches.filter(m=>m.stage===stage).map(m=><KOCard key={m.id} domId={`ko-match-${m.id}`} match={m} pick={userKOW[`w_${m.id}`]} result={resultKOW[`w_${m.id}`]} onPick={t=>setKOPick(m.id,t)} isOpen={koPickOpen(m.id, bracketOpen, now)} color={stageColor}/>)}
     </div>
   </div>;
 }
 
-function KOCard({ match, pick, result, onPick, isOpen, color }) {
+function KOCard({ match, pick, result, onPick, isOpen, color, domId }) {
   const ok = pick && result && pick===result, bad = pick && result && pick!==result;
-  return <div style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10, boxShadow:pick?`4px 4px 0 ${color}`:"none"}}>
+  return <div id={domId} style={{background:"#fff", border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10, scrollMarginTop:80, boxShadow:pick?`4px 4px 0 ${color}`:"none"}}>
     <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12}}>
       <div style={{display:"flex", gap:8, alignItems:"center"}}>
         <Num style={{fontSize:10, fontWeight:700, color, letterSpacing:"0.04em"}}>M{match.id}</Num>
