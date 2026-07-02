@@ -205,6 +205,13 @@ const FIRST_KICKOFF = GROUP_MATCHES.reduce((a,b) => a.kickoff < b.kickoff ? a : 
 // final) locks independently at its own kickoff — no earlier match affects it.
 const koPickOpen = (id, bracketOpen, now) => bracketOpen && now < KO_KICKOFFS[id];
 
+// Public pick visibility is purely time-based, no login required: a match's
+// player picks are shown only once it has kicked off. Before kickoff every
+// player's picks stay hidden everywhere. Group matches carry their own
+// `.kickoff`; knockout matches resolve theirs from KO_KICKOFFS by id.
+const matchKickoff = m => m.kickoff || KO_KICKOFFS[m.id];
+const hasKickedOff = (m, now) => matchKickoff(m) <= now;
+
 // ─── STANDINGS ───────────────────────────────────────────────────────────────
 function computeStandings(preds) {
   const groups = {};
@@ -713,6 +720,13 @@ export default function App() {
   </div>;
 }
 
+// Shown in place of the per-player picks for any match that has not kicked off
+// yet. Reuses the existing muted placeholder styling and the same top-border
+// spacing as the picks section it replaces — no new visual design.
+function PicksRevealNote() {
+  return <div style={{marginTop:12, paddingTop:10, borderTop:`1px solid ${CT.rule}`, fontFamily:FF.sans, fontSize:13, color:CT.faint}}>Picks revealed at kickoff</div>;
+}
+
 // ─── MATCH CARD PER-PLAYER PICKS ─────────────────────────────────────────────
 // Shared by the Live Now and Next 24 Hours home-screen cards. Lists every
 // player's pick for the match, sorted by leaderboard standing (players prop is
@@ -854,7 +868,6 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
         const actual = isGroup ? resultGroup[m.id] : resultKOW[`w_${m.id}`];
         let resultLabel = null;
         if (actual) resultLabel = isGroup ? (actual==="home"?shortName(m.home):actual==="away"?shortName(m.away):"Draw") : shortName(actual);
-        const players = (leaderboard||[]).map(p => p.name);
         return <button key={m.id} onClick={()=>onMPMatch(m)} style={{
           width:"100%", textAlign:"left", display:"block", background:"#fff",
           border:`1.5px solid ${CT.ink}`, padding:"14px", marginBottom:10,
@@ -876,7 +889,7 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
             <Kicker>{resultLabel ? "RESULT" : "UPCOMING"}</Kicker>
             {resultLabel && <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{resultLabel}</span>}
           </div>
-          <MatchPlayerPicks m={m} isGroup={isGroup} players={players} allUsers={allUsers} actual={actual}/>
+          <PicksRevealNote/>
         </button>;
       })}
     </div>}
@@ -1370,6 +1383,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
     </>;
   }
 
+  const now = new Date();
   const groupPreds = user.groupPreds || {};
   const userKOW = user.userKOW || {};
   const bonusChampion = user.bonusChampion || "";
@@ -1495,20 +1509,22 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
           <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10, marginBottom:10}}>
             <TeamCell team={m.home}/><Serif size={13} color={CT.faint}>vs</Serif><TeamCell team={m.away} reverse/>
           </div>
-          <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
-            <div>
-              <Kicker>PICK</Kicker>
-              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:CT.ink}}>{pick ? pickLabel(m, pick) : "—"}</div>
-            </div>
-            <div>
-              <Kicker>ACTUAL</Kicker>
-              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:actual?CT.ink:CT.faint}}>{actual ? pickLabel(m, actual) : "—"}</div>
-            </div>
-            <div>
-              <Kicker>EARNED</Kicker>
-              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:700, color:earned>0?CT.green:CT.ink}}>{actual && pick ? `${earned} pts` : "—"}</div>
-            </div>
-          </div>
+          {hasKickedOff(m, now)
+            ? <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
+                <div>
+                  <Kicker>PICK</Kicker>
+                  <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:CT.ink}}>{pick ? pickLabel(m, pick) : "—"}</div>
+                </div>
+                <div>
+                  <Kicker>ACTUAL</Kicker>
+                  <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:actual?CT.ink:CT.faint}}>{actual ? pickLabel(m, actual) : "—"}</div>
+                </div>
+                <div>
+                  <Kicker>EARNED</Kicker>
+                  <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:700, color:earned>0?CT.green:CT.ink}}>{actual && pick ? `${earned} pts` : "—"}</div>
+                </div>
+              </div>
+            : <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, fontFamily:FF.sans, fontSize:13, color:CT.faint}}>Picks revealed at kickoff</div>}
         </div>;
       })}
     </div>
@@ -1550,20 +1566,22 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
           </div> : <div style={{padding:"6px 0 10px", textAlign:"center"}}>
             <Serif size={13} color={CT.faint}>TBD — teams not yet resolved.</Serif>
           </div>}
-          <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
-            <div>
-              <Kicker>PICK</Kicker>
-              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:pick?CT.ink:CT.faint}}>{pick || "—"}</div>
-            </div>
-            <div>
-              <Kicker>ACTUAL</Kicker>
-              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:actual?CT.ink:CT.faint}}>{actual || "—"}</div>
-            </div>
-            <div>
-              <Kicker>EARNED</Kicker>
-              <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:700, color:earned>0?CT.green:CT.ink}}>{actual && pick ? `${earned} pts` : "—"}</div>
-            </div>
-          </div>
+          {hasKickedOff(m, now)
+            ? <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
+                <div>
+                  <Kicker>PICK</Kicker>
+                  <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:pick?CT.ink:CT.faint}}>{pick || "—"}</div>
+                </div>
+                <div>
+                  <Kicker>ACTUAL</Kicker>
+                  <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:600, color:actual?CT.ink:CT.faint}}>{actual || "—"}</div>
+                </div>
+                <div>
+                  <Kicker>EARNED</Kicker>
+                  <div style={{marginTop:4, fontFamily:FF.sans, fontSize:13, fontWeight:700, color:earned>0?CT.green:CT.ink}}>{actual && pick ? `${earned} pts` : "—"}</div>
+                </div>
+              </div>
+            : <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, fontFamily:FF.sans, fontSize:13, color:CT.faint}}>Picks revealed at kickoff</div>}
         </div>;
       })}
     </div>
@@ -1585,6 +1603,7 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
     return () => clearTimeout(t);
   }, [initial]);
 
+  const now = new Date();
   const players = leaderboard.map(p => p.name);
   const realStandings = applyTiebreakers(computeStandings(resultGroup), tiebreakers);
   const koMatches = buildKO(realStandings, resultB3, resultKOW);
@@ -1675,13 +1694,15 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
               <Kicker>RESULT</Kicker>
               <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink}}>{actualLabel}</span>
             </div>}
-            <PlayerRows hasResult={hasResult} getPick={name => {
-              const pick = allUsers[name]?.groupPreds?.[m.id];
-              const ok = !!(pick && actual && pick===actual);
-              const earned = ok ? (actual==="draw"?GROUP_WIN_PTS+DRAW_BONUS_PTS:GROUP_WIN_PTS) : 0;
-              const label = pick==="home"?shortName(m.home):pick==="away"?shortName(m.away):pick==="draw"?"Draw":"";
-              return { label, made: !!pick, earned, ok };
-            }}/>
+            {hasKickedOff(m, now)
+              ? <PlayerRows hasResult={hasResult} getPick={name => {
+                  const pick = allUsers[name]?.groupPreds?.[m.id];
+                  const ok = !!(pick && actual && pick===actual);
+                  const earned = ok ? (actual==="draw"?GROUP_WIN_PTS+DRAW_BONUS_PTS:GROUP_WIN_PTS) : 0;
+                  const label = pick==="home"?shortName(m.home):pick==="away"?shortName(m.away):pick==="draw"?"Draw":"";
+                  return { label, made: !!pick, earned, ok };
+                }}/>
+              : <PicksRevealNote/>}
           </div>;
         })}
       </div>
@@ -1722,12 +1743,14 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
               <Kicker>RESULT</Kicker>
               <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink}}>{shortName(actual)}</span>
             </div>}
-            <PlayerRows hasResult={hasResult} getPick={name => {
-              const pick = allUsers[name]?.userKOW?.[`w_${m.id}`];
-              const ok = !!(pick && actual && pick===actual);
-              const earned = ok ? (STAGE_POINTS[m.stage] || 0) : 0;
-              return { label: pick ? shortName(pick) : "", made: !!pick, earned, ok };
-            }}/>
+            {hasKickedOff(m, now)
+              ? <PlayerRows hasResult={hasResult} getPick={name => {
+                  const pick = allUsers[name]?.userKOW?.[`w_${m.id}`];
+                  const ok = !!(pick && actual && pick===actual);
+                  const earned = ok ? (STAGE_POINTS[m.stage] || 0) : 0;
+                  return { label: pick ? shortName(pick) : "", made: !!pick, earned, ok };
+                }}/>
+              : <PicksRevealNote/>}
           </div>;
         })}
       </div>
