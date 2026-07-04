@@ -314,6 +314,16 @@ function buildKO(standings, b3, koW) {
   return KO_DEF.map(m => ({ ...m, ...etToMYT(m.date, m.et), home: resolveTeam(m.homeSlot, standings, b3, koW), away: resolveTeam(m.awaySlot, standings, b3, koW) }));
 }
 
+// Resolve every match's two participants (home/away) from ADMIN results only —
+// always pass resultKOW here, never a user's own picks. This means R16 teams come
+// from the actual R32 winners, QF teams from the actual R16 winners, and so on; a
+// slot whose feeding result isn't in yet stays TBD (null). Use this everywhere a
+// match card shows team names/flags so the teams shown never depend on what any
+// player predicted. A player's own pick is tracked separately in userKOW.
+function buildKODisplay(standings, b3, resultKOW) {
+  return buildKO(standings, b3, resultKOW);
+}
+
 // ─── STORAGE KEYS / SETTINGS ─────────────────────────────────────────────────
 const USERS_KEY = "wc2026_users_v6";
 const RESULTS_KEY = "wc2026_results_v6";
@@ -476,10 +486,13 @@ export default function App() {
 
   const bonusLocked = settings.bonusOpen === false;
   const realStandings = applyTiebreakers(computeStandings(resultGroup), tiebreakers);
-  const realKOMatches = buildKO(realStandings, resultB3, userKOW);
+  // Who plays in each match is always resolved from admin results (resultKOW),
+  // never from the user's own picks — a wrong pick in one round must not change
+  // which teams appear in the next.
+  const realKOMatches = buildKODisplay(realStandings, resultB3, resultKOW);
   const userStandings = computeStandings(groupPreds);
 
-  const realKOResolved = buildKO(realStandings, resultB3, resultKOW);
+  const realKOResolved = buildKODisplay(realStandings, resultB3, resultKOW);
   const dayAhead = new Date(now.getTime() + 24*60*60*1000);
   const nextMatches = [...GROUP_MATCHES, ...realKOResolved]
     .map(m => ({ m, k: m.kickoff || KO_KICKOFFS[m.id] }))
@@ -583,8 +596,10 @@ export default function App() {
         KO_DEF.filter(m => m.stage === stage).forEach(m => {
           const k = `w_${m.id}`;
           if (koPickOpen(m.id, settings.bracketOpen !== false, now) && !nk[k]) {
-            const h = resolveTeam(m.homeSlot, realStandings, resultB3, nk);
-            const a = resolveTeam(m.awaySlot, realStandings, resultB3, nk);
+            // The two candidates come from real admin results, never from the
+            // user's own picks, so lucky-fill only picks a genuine participant.
+            const h = resolveTeam(m.homeSlot, realStandings, resultB3, resultKOW);
+            const a = resolveTeam(m.awaySlot, realStandings, resultB3, resultKOW);
             const opts = [h, a].filter(Boolean);
             if (opts.length > 0) nk[k] = rand(opts);
           }
@@ -1391,7 +1406,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
   const score = calcPoints(user, resultGroup, resultKOW, resultBonus);
 
   const realStandings = applyTiebreakers(computeStandings(resultGroup), tiebreakers);
-  const actualKOMatches = buildKO(realStandings, resultB3, resultKOW);
+  const actualKOMatches = buildKODisplay(realStandings, resultB3, resultKOW);
 
   const champActual = resultBonus?.champion || "";
   const ruActual = resultBonus?.runnerUp || "";
@@ -1606,7 +1621,7 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
   const now = new Date();
   const players = leaderboard.map(p => p.name);
   const realStandings = applyTiebreakers(computeStandings(resultGroup), tiebreakers);
-  const koMatches = buildKO(realStandings, resultB3, resultKOW);
+  const koMatches = buildKODisplay(realStandings, resultB3, resultKOW);
   const stages = ["R32","R16","QF","SF","3P","F"];
 
   const grpMatches = GROUP_MATCHES.filter(m => m.grp === activeGrp);
