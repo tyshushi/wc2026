@@ -1653,7 +1653,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
 function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, resultKOW, tiebreakers, onBack, initial }) {
   const [section, setSection] = useState(initial?.section || "knockout");
   const [activeGrp, setActiveGrp] = useState(initial?.activeGrp || "A");
-  const [activeStage, setActiveStage] = useState(initial?.activeStage || "R32");
+  const [activeStage, setActiveStage] = useState(initial?.activeStage || "R16");
 
   useEffect(() => {
     if (!initial?.matchId) return;
