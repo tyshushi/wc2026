@@ -324,6 +324,26 @@ function buildKODisplay(standings, b3, resultKOW) {
   return buildKO(standings, b3, resultKOW);
 }
 
+// Drop stale knockout picks left over from the old pick-chaining. Since the
+// bracket-team-resolution fix, each match's two participants come from admin
+// results, and the pick UI only ever offers those two teams. So once a match's
+// real home AND away are both resolved, a stored pick that matches NEITHER can
+// only be a leftover from when matches were chained through the player's own
+// earlier picks — it can never be a selection the player could make now. Remove
+// it so the match shows as un-picked (ready to re-pick a real team) instead of
+// counting as a phantom pick or greying out both real teams. Matches whose teams
+// are not yet both resolved (TBD) are left untouched. `koMatches` is the resolved
+// bracket from buildKODisplay(...resultKOW).
+function reconcileKOPicks(userKOW, koMatches) {
+  const out = { ...(userKOW || {}) };
+  koMatches.forEach(m => {
+    const k = `w_${m.id}`;
+    const pick = out[k];
+    if (pick && m.home && m.away && pick !== m.home && pick !== m.away) delete out[k];
+  });
+  return out;
+}
+
 // ─── STORAGE KEYS / SETTINGS ─────────────────────────────────────────────────
 const USERS_KEY = "wc2026_users_v6";
 const RESULTS_KEY = "wc2026_results_v6";
@@ -492,6 +512,27 @@ export default function App() {
   const realKOMatches = buildKODisplay(realStandings, resultB3, resultKOW);
   const userStandings = computeStandings(groupPreds);
 
+  // Reconcile the logged-in player's knockout picks against the real bracket
+  // whenever admin results change (each results update re-resolves every match's
+  // participants via buildKODisplay above) or on login. Because this runs after
+  // realKOMatches has the correct real home/away for each match, a stored pick
+  // that matches neither real team of that specific match — e.g. a "Netherlands"
+  // pick left under M90 once M90 resolves to Canada vs Morocco — is cleared as
+  // soon as the resolving results arrive, not only at PIN entry or save. It only
+  // removes picks matching neither real team, so a pick the player is actively
+  // making (always one of the two real teams) is never touched.
+  useEffect(() => {
+    if (!username) return;
+    // Guarded: reconcileKOPicks only ever removes keys, and we return the same
+    // reference when nothing changed, so this never triggers a cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUserKOW(prev => {
+      const next = reconcileKOPicks(prev, realKOMatches);
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [username, resultKOW, resultGroup, resultB3, tiebreakers]);
+
   const realKOResolved = buildKODisplay(realStandings, resultB3, resultKOW);
   const dayAhead = new Date(now.getTime() + 24*60*60*1000);
   const nextMatches = [...GROUP_MATCHES, ...realKOResolved]
@@ -542,7 +583,7 @@ export default function App() {
     const existing = allUsers[pendingName];
     const hashed = await hashPin(pinInput);
     if (hashed !== existing.pin) { setAuthError("Incorrect PIN. Try again."); setPinInput(""); return; }
-    setUsername(pendingName); setGroupPreds(existing.groupPreds||{}); setUserKOW(existing.userKOW||{});
+    setUsername(pendingName); setGroupPreds(existing.groupPreds||{}); setUserKOW(reconcileKOPicks(existing.userKOW||{}, realKOMatches));
     setBonusChampion(existing.bonusChampion||""); setBonusRunnerUp(existing.bonusRunnerUp||"");
     setAuthStep("name"); setAuthError(""); setNameInput(""); setPinInput("");
     setSubTab(settings.bracketOpen !== false ? "bracket" : "group"); setView("predict");
@@ -561,8 +602,10 @@ export default function App() {
     const existing = allUsers[username] || {};
     const safeGroup = {...(existing.groupPreds||{})};
     GROUP_MATCHES.forEach(m => { if (settings.groupOpen !== false) { if (groupPreds[m.id]) safeGroup[m.id] = groupPreds[m.id]; else delete safeGroup[m.id]; } });
-    const safeKO = {...(existing.userKOW||{})};
+    let safeKO = {...(existing.userKOW||{})};
     KO_DEF.forEach(m => { if (koPickOpen(m.id, settings.bracketOpen !== false, now)) { const k=`w_${m.id}`; if (userKOW[k]) safeKO[k]=userKOW[k]; else delete safeKO[k]; } });
+    // Strip stale chained picks (see reconcileKOPicks) so they are not written back.
+    safeKO = reconcileKOPicks(safeKO, realKOMatches);
     const safeChamp = bonusLocked ? (existing.bonusChampion||"") : bonusChampion;
     const safeRU = bonusLocked ? (existing.bonusRunnerUp||"") : bonusRunnerUp;
     const upd = {...allUsers, [username]: { ...existing, groupPreds:safeGroup, userKOW:safeKO, bonusChampion:safeChamp, bonusRunnerUp:safeRU, savedAt: new Date().toISOString() }};
@@ -881,6 +924,7 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
         const isGroup = !!m.grp;
         const color = isGroup ? GROUP_COLORS[m.grp] : STAGE_COLORS[m.stage];
         const actual = isGroup ? resultGroup[m.id] : resultKOW[`w_${m.id}`];
+        const players = (leaderboard||[]).map(p => p.name);
         let resultLabel = null;
         if (actual) resultLabel = isGroup ? (actual==="home"?shortName(m.home):actual==="away"?shortName(m.away):"Draw") : shortName(actual);
         return <button key={m.id} onClick={()=>onMPMatch(m)} style={{
@@ -904,7 +948,9 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
             <Kicker>{resultLabel ? "RESULT" : "UPCOMING"}</Kicker>
             {resultLabel && <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{resultLabel}</span>}
           </div>
-          <PicksRevealNote/>
+          {actual
+            ? <MatchPlayerPicks m={m} isGroup={isGroup} players={players} allUsers={allUsers} actual={actual}/>
+            : <PicksRevealNote/>}
         </button>;
       })}
     </div>}
@@ -1524,7 +1570,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
           <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10, marginBottom:10}}>
             <TeamCell team={m.home}/><Serif size={13} color={CT.faint}>vs</Serif><TeamCell team={m.away} reverse/>
           </div>
-          {hasKickedOff(m, now)
+          {(hasKickedOff(m, now) || actual)
             ? <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
                 <div>
                   <Kicker>PICK</Kicker>
@@ -1581,7 +1627,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
           </div> : <div style={{padding:"6px 0 10px", textAlign:"center"}}>
             <Serif size={13} color={CT.faint}>TBD — teams not yet resolved.</Serif>
           </div>}
-          {hasKickedOff(m, now)
+          {(hasKickedOff(m, now) || actual)
             ? <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
                 <div>
                   <Kicker>PICK</Kicker>
@@ -1709,7 +1755,7 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
               <Kicker>RESULT</Kicker>
               <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink}}>{actualLabel}</span>
             </div>}
-            {hasKickedOff(m, now)
+            {(hasKickedOff(m, now) || hasResult)
               ? <PlayerRows hasResult={hasResult} getPick={name => {
                   const pick = allUsers[name]?.groupPreds?.[m.id];
                   const ok = !!(pick && actual && pick===actual);
@@ -1758,7 +1804,7 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
               <Kicker>RESULT</Kicker>
               <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink}}>{shortName(actual)}</span>
             </div>}
-            {hasKickedOff(m, now)
+            {(hasKickedOff(m, now) || hasResult)
               ? <PlayerRows hasResult={hasResult} getPick={name => {
                   const pick = allUsers[name]?.userKOW?.[`w_${m.id}`];
                   const ok = !!(pick && actual && pick===actual);
