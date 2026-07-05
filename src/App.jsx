@@ -324,6 +324,26 @@ function buildKODisplay(standings, b3, resultKOW) {
   return buildKO(standings, b3, resultKOW);
 }
 
+// Drop stale knockout picks left over from the old pick-chaining. Since the
+// bracket-team-resolution fix, each match's two participants come from admin
+// results, and the pick UI only ever offers those two teams. So once a match's
+// real home AND away are both resolved, a stored pick that matches NEITHER can
+// only be a leftover from when matches were chained through the player's own
+// earlier picks — it can never be a selection the player could make now. Remove
+// it so the match shows as un-picked (ready to re-pick a real team) instead of
+// counting as a phantom pick or greying out both real teams. Matches whose teams
+// are not yet both resolved (TBD) are left untouched. `koMatches` is the resolved
+// bracket from buildKODisplay(...resultKOW).
+function reconcileKOPicks(userKOW, koMatches) {
+  const out = { ...(userKOW || {}) };
+  koMatches.forEach(m => {
+    const k = `w_${m.id}`;
+    const pick = out[k];
+    if (pick && m.home && m.away && pick !== m.home && pick !== m.away) delete out[k];
+  });
+  return out;
+}
+
 // ─── STORAGE KEYS / SETTINGS ─────────────────────────────────────────────────
 const USERS_KEY = "wc2026_users_v6";
 const RESULTS_KEY = "wc2026_results_v6";
@@ -542,7 +562,7 @@ export default function App() {
     const existing = allUsers[pendingName];
     const hashed = await hashPin(pinInput);
     if (hashed !== existing.pin) { setAuthError("Incorrect PIN. Try again."); setPinInput(""); return; }
-    setUsername(pendingName); setGroupPreds(existing.groupPreds||{}); setUserKOW(existing.userKOW||{});
+    setUsername(pendingName); setGroupPreds(existing.groupPreds||{}); setUserKOW(reconcileKOPicks(existing.userKOW||{}, realKOMatches));
     setBonusChampion(existing.bonusChampion||""); setBonusRunnerUp(existing.bonusRunnerUp||"");
     setAuthStep("name"); setAuthError(""); setNameInput(""); setPinInput("");
     setSubTab(settings.bracketOpen !== false ? "bracket" : "group"); setView("predict");
@@ -561,8 +581,10 @@ export default function App() {
     const existing = allUsers[username] || {};
     const safeGroup = {...(existing.groupPreds||{})};
     GROUP_MATCHES.forEach(m => { if (settings.groupOpen !== false) { if (groupPreds[m.id]) safeGroup[m.id] = groupPreds[m.id]; else delete safeGroup[m.id]; } });
-    const safeKO = {...(existing.userKOW||{})};
+    let safeKO = {...(existing.userKOW||{})};
     KO_DEF.forEach(m => { if (koPickOpen(m.id, settings.bracketOpen !== false, now)) { const k=`w_${m.id}`; if (userKOW[k]) safeKO[k]=userKOW[k]; else delete safeKO[k]; } });
+    // Strip stale chained picks (see reconcileKOPicks) so they are not written back.
+    safeKO = reconcileKOPicks(safeKO, realKOMatches);
     const safeChamp = bonusLocked ? (existing.bonusChampion||"") : bonusChampion;
     const safeRU = bonusLocked ? (existing.bonusRunnerUp||"") : bonusRunnerUp;
     const upd = {...allUsers, [username]: { ...existing, groupPreds:safeGroup, userKOW:safeKO, bonusChampion:safeChamp, bonusRunnerUp:safeRU, savedAt: new Date().toISOString() }};
