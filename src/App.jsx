@@ -512,6 +512,27 @@ export default function App() {
   const realKOMatches = buildKODisplay(realStandings, resultB3, resultKOW);
   const userStandings = computeStandings(groupPreds);
 
+  // Reconcile the logged-in player's knockout picks against the real bracket
+  // whenever admin results change (each results update re-resolves every match's
+  // participants via buildKODisplay above) or on login. Because this runs after
+  // realKOMatches has the correct real home/away for each match, a stored pick
+  // that matches neither real team of that specific match — e.g. a "Netherlands"
+  // pick left under M90 once M90 resolves to Canada vs Morocco — is cleared as
+  // soon as the resolving results arrive, not only at PIN entry or save. It only
+  // removes picks matching neither real team, so a pick the player is actively
+  // making (always one of the two real teams) is never touched.
+  useEffect(() => {
+    if (!username) return;
+    // Guarded: reconcileKOPicks only ever removes keys, and we return the same
+    // reference when nothing changed, so this never triggers a cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUserKOW(prev => {
+      const next = reconcileKOPicks(prev, realKOMatches);
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [username, resultKOW, resultGroup, resultB3, tiebreakers]);
+
   const realKOResolved = buildKODisplay(realStandings, resultB3, resultKOW);
   const dayAhead = new Date(now.getTime() + 24*60*60*1000);
   const nextMatches = [...GROUP_MATCHES, ...realKOResolved]
