@@ -903,6 +903,7 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
         const isGroup = !!m.grp;
         const color = isGroup ? GROUP_COLORS[m.grp] : STAGE_COLORS[m.stage];
         const actual = isGroup ? resultGroup[m.id] : resultKOW[`w_${m.id}`];
+        const players = (leaderboard||[]).map(p => p.name);
         let resultLabel = null;
         if (actual) resultLabel = isGroup ? (actual==="home"?shortName(m.home):actual==="away"?shortName(m.away):"Draw") : shortName(actual);
         return <button key={m.id} onClick={()=>onMPMatch(m)} style={{
@@ -926,7 +927,9 @@ function HomeScreen({ nameInput, setNameInput, pinInput, setPinInput, pinConfirm
             <Kicker>{resultLabel ? "RESULT" : "UPCOMING"}</Kicker>
             {resultLabel && <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{resultLabel}</span>}
           </div>
-          <PicksRevealNote/>
+          {actual
+            ? <MatchPlayerPicks m={m} isGroup={isGroup} players={players} allUsers={allUsers} actual={actual}/>
+            : <PicksRevealNote/>}
         </button>;
       })}
     </div>}
@@ -1546,7 +1549,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
           <div style={{display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", gap:10, marginBottom:10}}>
             <TeamCell team={m.home}/><Serif size={13} color={CT.faint}>vs</Serif><TeamCell team={m.away} reverse/>
           </div>
-          {hasKickedOff(m, now)
+          {(hasKickedOff(m, now) || actual)
             ? <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
                 <div>
                   <Kicker>PICK</Kicker>
@@ -1603,7 +1606,7 @@ function PlayerDetailScreen({ name, user, resultGroup, resultB3, resultKOW, resu
           </div> : <div style={{padding:"6px 0 10px", textAlign:"center"}}>
             <Serif size={13} color={CT.faint}>TBD — teams not yet resolved.</Serif>
           </div>}
-          {hasKickedOff(m, now)
+          {(hasKickedOff(m, now) || actual)
             ? <div style={{paddingTop:10, borderTop:`1px solid ${CT.rule}`, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6}}>
                 <div>
                   <Kicker>PICK</Kicker>
@@ -1731,7 +1734,7 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
               <Kicker>RESULT</Kicker>
               <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink}}>{actualLabel}</span>
             </div>}
-            {hasKickedOff(m, now)
+            {(hasKickedOff(m, now) || hasResult)
               ? <PlayerRows hasResult={hasResult} getPick={name => {
                   const pick = allUsers[name]?.groupPreds?.[m.id];
                   const ok = !!(pick && actual && pick===actual);
@@ -1780,7 +1783,7 @@ function MatchPicksScreen({ allUsers, leaderboard, resultGroup, resultB3, result
               <Kicker>RESULT</Kicker>
               <span style={{fontFamily:FF.sans, fontSize:13, fontWeight:700, color:CT.ink}}>{shortName(actual)}</span>
             </div>}
-            {hasKickedOff(m, now)
+            {(hasKickedOff(m, now) || hasResult)
               ? <PlayerRows hasResult={hasResult} getPick={name => {
                   const pick = allUsers[name]?.userKOW?.[`w_${m.id}`];
                   const ok = !!(pick && actual && pick===actual);
